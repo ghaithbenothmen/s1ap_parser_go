@@ -2,7 +2,7 @@
 
 A professional, high-performance S1AP (S1 Application Protocol) analyzer for PCAP files. This tool provides comprehensive analysis of S1AP messages used in LTE/4G networks between eNodeB and MME.
 
-## 🚀 Features
+## Features
 
 - **Comprehensive S1AP Support**: Analyzes all 67 S1AP procedure types
 - **Multiple Output Formats**: Simple, detailed, and JSON output formats
@@ -12,7 +12,7 @@ A professional, high-performance S1AP (S1 Application Protocol) analyzer for PCA
 - **Statistics**: Detailed analysis statistics and procedure breakdowns
 - **Cross-Platform**: Builds for Linux, macOS, and Windows
 
-## 📋 Supported S1AP Procedures
+## Supported S1AP Procedures
 
 The analyzer supports all standard S1AP procedures including:
 - Paging, Initial UE Message, UL/DL NAS Transport
@@ -21,7 +21,7 @@ The analyzer supports all standard S1AP procedures including:
 - Configuration updates, Error handling
 - And many more...
 
-## 🛠️ Installation
+## Installation
 
 ### Prerequisites
 
@@ -50,7 +50,7 @@ make install
 make dev-setup
 ```
 
-## 📖 Usage
+## Usage
 
 ### Basic Usage
 
@@ -130,7 +130,7 @@ procedure:
 }
 ```
 
-## 🏗️ Architecture
+## Architecture
 
 The project follows a clean, modular architecture:
 
@@ -149,7 +149,7 @@ coreswitch/
 └── build/                 # Build outputs
 ```
 
-## 🧪 Testing
+## Testing
 
 ```bash
 # Run all tests
@@ -162,7 +162,7 @@ make test-coverage
 make lint
 ```
 
-## 🔧 Development
+## Development
 
 ### Building
 
@@ -190,7 +190,7 @@ make lint
 make dev-setup
 ```
 
-## 📊 Performance
+## Performance
 
 The analyzer is optimized for performance:
 - **Memory Efficient**: Streams PCAP data without loading entire file
@@ -198,7 +198,7 @@ The analyzer is optimized for performance:
 - **Scalable**: Handles large PCAP files (GB+) efficiently
 - **Configurable**: Packet limiting for quick analysis
 
-## 🤝 Contributing
+## Contributing
 
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/amazing-feature`
@@ -215,17 +215,14 @@ The analyzer is optimized for performance:
 - Update documentation for user-facing changes
 - Run `make lint` before submitting
 
-## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - ASN.1 C libraries for S1AP protocol support
 - GoPacket library for PCAP processing
 - The telecommunications community for S1AP specifications
 
-## 📧 Support
+## Support
 
 For questions, issues, or contributions:
 - Open an issue on GitHub
@@ -234,7 +231,7 @@ For questions, issues, or contributions:
 
 ---
 
-**Professional S1AP Analysis Made Simple** 🚀
+**Professional S1AP Analysis Made Simple** 
 
 ----
 
