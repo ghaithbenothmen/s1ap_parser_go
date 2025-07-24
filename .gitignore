@@ -5,8 +5,59 @@
 *.so
 *.dylib
 
-# Test binary, build with `go test -c`
+# Test binary, built with `go test -c`
 *.test
 
-# Output of the go coverage tool, specifically when used with LiteIDE
+# Output of the go coverage tool
 *.out
+coverage.html
+
+# Go workspace file
+go.work
+
+# Build directory
+build/
+dist/
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# PCAP files (large)
+*.pcap
+*.pcapng
+
+# Development artifacts
+*_analyzer
+*_debug
+*_test
+debug_*
+test_*
+quick_*
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Dependencies
+vendor/
+
+# Documentation build
+docs/_build/
+
+# Local configuration
+*.local
+.env
