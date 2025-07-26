@@ -56,17 +56,18 @@ type Config struct {
 
 // S1APMessage represents a parsed S1AP message
 type S1APMessage struct {
-	PacketNumber   int       `json:"packet_number"`
-	Timestamp      time.Time `json:"timestamp"`
-	SrcIP          string    `json:"src_ip"`
-	DstIP          string    `json:"dst_ip"`
-	PDUType        string    `json:"pdu_type"`
-	PDUTypeCode    int       `json:"pdu_type_code"`
-	ProcedureName  string    `json:"procedure_name"`
-	ProcedureCode  int       `json:"procedure_code"`
-	Criticality    string    `json:"criticality"`
-	MessageIndex   int       `json:"message_index,omitempty"`
-	TotalMessages  int       `json:"total_messages,omitempty"`
+	PacketNumber   int                          `json:"packet_number"`
+	Timestamp      time.Time                    `json:"timestamp"`
+	SrcIP          string                       `json:"src_ip"`
+	DstIP          string                       `json:"dst_ip"`
+	PDUType        string                       `json:"pdu_type"`
+	PDUTypeCode    int                          `json:"pdu_type_code"`
+	ProcedureName  string                       `json:"procedure_name"`
+	ProcedureCode  int                          `json:"procedure_code"`
+	Criticality    string                       `json:"criticality"`
+	MessageIndex   int                          `json:"message_index,omitempty"`
+	TotalMessages  int                          `json:"total_messages,omitempty"`
+	IEs            []*s1ap.InformationElement   `json:"information_elements,omitempty"`
 }
 
 // Statistics holds analysis statistics
@@ -288,13 +289,14 @@ func (a *Analyzer) splitS1APMessages(data []byte) [][]byte {
 
 func (a *Analyzer) parseS1APMessage(packet gopacket.Packet, payload []byte, msgIndex, totalMsgs int) *S1APMessage {
 	// Try to decode with S1AP library
-	_, _, err := s1ap.Decode(payload)
+	decodedPDU, msgType, err := s1ap.Decode(payload)
 	if err != nil {
 		if a.config.Debug {
 			log.Printf("S1AP decode failed: %v", err)
 		}
 		return nil
 	}
+	defer s1ap.Free(decodedPDU)
 
 	// Extract real procedure code from payload
 	realProcCode := s1ap.ExtractProcedureCode(payload)
@@ -306,6 +308,9 @@ func (a *Analyzer) parseS1APMessage(packet gopacket.Packet, payload []byte, msgI
 	// Analyze PDU type
 	pduType, pduTypeCode := a.analyzePDUType(payload)
 
+	// Extract IEs from the decoded PDU
+	ies := s1ap.ExtractAllIEs(decodedPDU, msgType)
+
 	message := &S1APMessage{
 		PacketNumber:  a.stats.TotalFrames,
 		Timestamp:     packet.Metadata().Timestamp,
@@ -316,6 +321,7 @@ func (a *Analyzer) parseS1APMessage(packet gopacket.Packet, payload []byte, msgI
 		ProcedureName: procedureName,
 		ProcedureCode: realProcCode,
 		Criticality:   "ignore", // Default - can be enhanced
+		IEs:           ies,
 	}
 
 	if totalMsgs > 1 {
@@ -368,22 +374,38 @@ func (a *Analyzer) outputSimple(messages []*S1APMessage) error {
 		return a.outputStats()
 	}
 
-   for _, msg := range messages {
-		   tsFloat := float64(msg.Timestamp.UnixNano()) / 1e9
-		   fmt.Printf("packet_number: %d\n", msg.PacketNumber)
-		   fmt.Printf("timestamp: %.6f\n", tsFloat)
-		   fmt.Printf("timestamp_human: %s\n", msg.Timestamp.Format("2006-01-02 15:04:05.000"))
-		   fmt.Printf("src_ip: %s\n", msg.SrcIP)
-		   fmt.Printf("dst_ip: %s\n", msg.DstIP)
-		   fmt.Printf("s1ap_pdu:\n")
-		   fmt.Printf("  type: %s\n", msg.PDUType)
-		   fmt.Printf("  type_code: %d\n", msg.PDUTypeCode)
-		   fmt.Printf("procedure:\n")
-		   fmt.Printf("  name: %s\n", msg.ProcedureName)
-		   fmt.Printf("  code: %d\n", msg.ProcedureCode)
-		   fmt.Printf("  criticality: %s\n", msg.Criticality)
-		   fmt.Println()
-   }
+	for _, msg := range messages {
+		tsFloat := float64(msg.Timestamp.UnixNano()) / 1e9
+		fmt.Printf("packet_number: %d\n", msg.PacketNumber)
+		fmt.Printf("timestamp: %.6f\n", tsFloat)
+		fmt.Printf("timestamp_human: %s\n", msg.Timestamp.Format("2006-01-02 15:04:05.000"))
+		fmt.Printf("src_ip: %s\n", msg.SrcIP)
+		fmt.Printf("dst_ip: %s\n", msg.DstIP)
+		fmt.Printf("s1ap_pdu:\n")
+		fmt.Printf("  type: %s\n", msg.PDUType)
+		fmt.Printf("  type_code: %d\n", msg.PDUTypeCode)
+		fmt.Printf("procedure:\n")
+		fmt.Printf("  name: %s\n", msg.ProcedureName)
+		fmt.Printf("  code: %d\n", msg.ProcedureCode)
+		fmt.Printf("  criticality: %s\n", msg.Criticality)
+		
+		// Display Information Elements
+		if len(msg.IEs) > 0 {
+			fmt.Printf("information_elements:\n")
+			for _, ie := range msg.IEs {
+				fmt.Printf("  - id: %d\n", ie.ID)
+				fmt.Printf("    name: %s\n", ie.Name)
+				fmt.Printf("    criticality: %s\n", ie.Criticality)
+				if ie.Value != nil {
+					fmt.Printf("    value: %v\n", ie.Value)
+				}
+				if ie.RawValue != "" {
+					fmt.Printf("    raw_value: %s\n", ie.RawValue)
+				}
+			}
+		}
+		fmt.Println()
+	}
 
 	return a.outputStats()
 }

@@ -1,5 +1,14 @@
 package s1ap
 
+// InformationElement represents a parsed S1AP IE
+type InformationElement struct {
+	ID          int         `json:"id"`
+	Name        string      `json:"name"`
+	Criticality string      `json:"criticality"`
+	Value       interface{} `json:"value"`
+	RawValue    string      `json:"raw_value,omitempty"`
+}
+
 // S1AP Message Types
 const (
 	S1_SETUP_REQUEST = iota + 1
