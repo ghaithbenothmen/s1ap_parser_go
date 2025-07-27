@@ -4,7 +4,7 @@ package s1ap
 // #cgo LDFLAGS: -L/usr/local/lib -ls1ap
 // #include "S1AP-PDU.h"
 // #include "SuccessfulOutcome.h"
-// #include "s1ap_build.h"
+// // #include "s1ap_build.h"
 import "C"
 import (
 	"fmt"
@@ -13,32 +13,36 @@ import (
 )
 
 func S1SetupResponse() ([]byte, error) {
-	pdu := (*C.S1AP_PDU_t)(C.calloc(C.sizeof_struct_S1AP_PDU, 1))
-	C.S1SetupResponseBuild(pdu, 0)
-	return Encode(pdu)
+	// pdu := (*C.S1AP_PDU_t)(C.calloc(C.sizeof_struct_S1AP_PDU, 1))
+	// C.S1SetupResponseBuild(pdu, 0)
+	// return Encode(pdu)
+	return nil, fmt.Errorf("S1SetupResponse not implemented")
 }
 
 func DownlinkNASTransport(enb_ie_s1ap_id int32, mmebuf []byte) ([]byte, error) {
-	fmt.Println("XXX", len(mmebuf))
-	pdu := (*C.S1AP_PDU_t)(C.calloc(C.sizeof_struct_S1AP_PDU, 1))
-	C.DownlinkNASTransportBuild(pdu,
-		(C.long)(enb_ie_s1ap_id),
-		(*C.uchar)((unsafe.Pointer)(&mmebuf[0])),
-		(C.int)(len(mmebuf)))
-	return Encode(pdu)
+	// fmt.Println("XXX", len(mmebuf))
+	// pdu := (*C.S1AP_PDU_t)(C.calloc(C.sizeof_struct_S1AP_PDU, 1))
+	// C.DownlinkNASTransportBuild(pdu,
+	// 	(C.long)(enb_ie_s1ap_id),
+	// 	(*C.uchar)((unsafe.Pointer)(&mmebuf[0])),
+	// 	(C.int)(len(mmebuf)))
+	// return Encode(pdu)
+	return nil, fmt.Errorf("DownlinkNASTransport not implemented")
 }
 
 func InitialContextSetupRequest(enb_ie_s1ap_id int32) ([]byte, error) {
-	pdu := (*C.S1AP_PDU_t)(C.calloc(C.sizeof_struct_S1AP_PDU, 1))
-	C.InitialContextSetupRequestBuild(pdu,
-		(C.long)(enb_ie_s1ap_id))
-	return Encode(pdu)
+	// pdu := (*C.S1AP_PDU_t)(C.calloc(C.sizeof_struct_S1AP_PDU, 1))
+	// C.InitialContextSetupRequestBuild(pdu,
+	// 	(C.long)(enb_ie_s1ap_id))
+	// return Encode(pdu)
+	return nil, fmt.Errorf("InitialContextSetupRequest not implemented")
 }
 
 func UplinkNASTransport() ([]byte, error) {
-	pdu := (*C.S1AP_PDU_t)(C.calloc(C.sizeof_struct_S1AP_PDU, 1))
-	C.UplinkNASTransportBuild(pdu)
-	return Encode(pdu)
+	// pdu := (*C.S1AP_PDU_t)(C.calloc(C.sizeof_struct_S1AP_PDU, 1))
+	// C.UplinkNASTransportBuild(pdu)
+	// return Encode(pdu)
+	return nil, fmt.Errorf("UplinkNASTransport not implemented")
 }
 
 const (
