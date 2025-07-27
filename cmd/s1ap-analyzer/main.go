@@ -208,16 +208,44 @@ func (a *Analyzer) analyzePackets(handle *pcap.Handle) ([]*S1APMessage, error) {
 }
 
 func (a *Analyzer) extractS1APMessages(packet gopacket.Packet) []*S1APMessage {
-	// Extract SCTP layer
+	// First try to extract SCTP layer
 	sctpLayer := packet.Layer(layers.LayerTypeSCTP)
-	if sctpLayer == nil {
+	var payload []byte
+	
+	if sctpLayer != nil {
+		sctp := sctpLayer.(*layers.SCTP)
+		payload = sctp.LayerPayload()
+	} else {
+		// Fallback: check if this could be S1AP over IP (sometimes SCTP detection fails)
+		// S1AP typically uses port 36412
+		if tcpLayer := packet.Layer(layers.LayerTypeTCP); tcpLayer != nil {
+			tcp := tcpLayer.(*layers.TCP)
+			if tcp.SrcPort == 36412 || tcp.DstPort == 36412 {
+				payload = tcp.LayerPayload()
+			}
+		} else if udpLayer := packet.Layer(layers.LayerTypeUDP); udpLayer != nil {
+			udp := udpLayer.(*layers.UDP)
+			if udp.SrcPort == 36412 || udp.DstPort == 36412 {
+				payload = udp.LayerPayload()
+			}
+		}
+		
+		// Last resort: check application data in any IP packet on port 36412
+		if len(payload) == 0 {
+			if ipLayer := packet.Layer(layers.LayerTypeIPv4); ipLayer != nil {
+				// Try to extract from application layer
+				if appLayer := packet.ApplicationLayer(); appLayer != nil {
+					payload = appLayer.Payload()
+				}
+			}
+		}
+	}
+	
+	if len(payload) == 0 {
 		return nil
 	}
 
-	sctp := sctpLayer.(*layers.SCTP)
-	payload := sctp.LayerPayload()
-
-	// Extract S1AP data from SCTP payload
+	// Extract S1AP data from payload
 	s1apData := a.extractS1APFromSCTP(payload)
 	if len(s1apData) == 0 {
 		return nil
@@ -242,38 +270,69 @@ func (a *Analyzer) extractS1APMessages(packet gopacket.Packet) []*S1APMessage {
 }
 
 func (a *Analyzer) extractS1APFromSCTP(payload []byte) []byte {
-	// Look for S1AP pattern: typically starts with 0x00 (InitiatingMessage)
+	// SCTP DATA chunk format: 
+	// Type (1) + Flags (1) + Length (2) + TSN (4) + Stream ID (2) + Stream Seq (2) + Protocol ID (4) + Data...
+	// For S1AP, we expect Protocol ID = 18 (S1AP) in bytes 12-15
+	
+	if len(payload) < 16 {
+		return nil
+	}
+	
+	// Check if this looks like an SCTP DATA chunk with S1AP
+	if payload[0] == 0x00 && payload[1] == 0x03 {
+		// This is an SCTP DATA chunk, S1AP data starts at offset 16
+		if len(payload) > 16 {
+			s1apData := payload[16:]
+			// Now check if this looks like S1AP
+			if len(s1apData) >= 3 && a.isLikelyS1AP(s1apData) {
+				return s1apData
+			}
+		}
+	}
+	
+	// Fallback: look for S1AP patterns anywhere in the payload
 	for i := 0; i < len(payload)-8; i++ {
-		if payload[i] == 0x00 && i+8 < len(payload) {
+		firstByte := payload[i]
+		if (firstByte == 0x00 || firstByte == 0x20 || firstByte == 0x40) && i+8 < len(payload) {
 			if a.isLikelyS1AP(payload[i:]) {
 				return payload[i:]
 			}
 		}
 	}
+	
 	return nil
 }
 
 func (a *Analyzer) isLikelyS1AP(data []byte) bool {
-	if len(data) < 8 {
+	if len(data) < 3 {
 		return false
 	}
 
-	// Basic S1AP validation
-	if data[0] != 0x00 { // InitiatingMessage
+	// Check for valid S1AP PDU types (based on ASN.1 CHOICE)
+	firstByte := data[0]
+	if firstByte != 0x00 && firstByte != 0x20 && firstByte != 0x40 {
 		return false
 	}
 
+	// Check procedure code range (0-66 are known S1AP procedures)
 	procedureCode := int(data[1])
 	if procedureCode < 0 || procedureCode > 66 {
 		return false
 	}
 
-	// Check for typical APER encoding patterns
-	if (data[2] & 0x40) == 0 {
+	// Basic APER validation
+	if len(data) < 8 {
 		return false
 	}
 
 	return true
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func (a *Analyzer) splitS1APMessages(data []byte) [][]byte {

@@ -1737,23 +1737,233 @@ func ExtractFallbackIEs(payload []byte, procedureCode int) []*InformationElement
 	return result
 }
 
-// ===== FONCTIONS D'EXTRACTION SIMPLIFIÉES =====
+// ===== NOUVELLES FONCTIONS D'EXTRACTION POUR PROCÉDURES MANQUÉES =====
 
 func extractERABSetupResponseIEs(packet unsafe.Pointer) []*InformationElement {
-	return extractGenericIEs(packet, 5) // E-RABSetupResponse
+	var result []*InformationElement
+	log.Printf("DEBUG: Extracting E-RABSetupResponse IEs")
+	
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.SuccessfulOutcome_t)(unsafe.Pointer(&pdu.choice))
+	val := (*C.E_RABSetupResponse_t)(unsafe.Pointer(&msg.value.choice))
+
+	var ies []*C.E_RABSetupResponseIEs_t
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
+	slice.Cap = (int)(val.protocolIEs.list.count)
+	slice.Len = (int)(val.protocolIEs.list.count)
+	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+
+	for _, ie := range ies {
+		switch ie.id {
+		case 0: // MME-UE-S1AP-ID
+			result = append(result, &InformationElement{
+				ID:          int(ie.id),
+				Name:        "id_MME_UE_S1AP_ID",
+				Criticality: getCriticality(ie.criticality),
+				Value:       fmt.Sprintf("%d", ie.value.choice.MME_UE_S1AP_ID),
+				RawValue:    fmt.Sprintf("%d", ie.value.choice.MME_UE_S1AP_ID),
+			})
+		case 8: // eNB-UE-S1AP-ID
+			result = append(result, &InformationElement{
+				ID:          int(ie.id),
+				Name:        "id_eNB_UE_S1AP_ID",
+				Criticality: getCriticality(ie.criticality),
+				Value:       fmt.Sprintf("%d", ie.value.choice.ENB_UE_S1AP_ID),
+				RawValue:    fmt.Sprintf("%d", ie.value.choice.ENB_UE_S1AP_ID),
+			})
+		case 33: // E-RABSetupListBearerSURes
+			result = append(result, &InformationElement{
+				ID:          int(ie.id),
+				Name:        "id_E_RABSetupListBearerSURes",
+				Criticality: getCriticality(ie.criticality),
+				Value:       "E-RABSetupListBearerSURes",
+				RawValue:    "E-RAB Setup List Present",
+			})
+		default:
+			result = append(result, &InformationElement{
+				ID:          int(ie.id),
+				Name:        fmt.Sprintf("unknown_ie_%d", ie.id),
+				Criticality: getCriticality(ie.criticality),
+				Value:       "Unknown",
+				RawValue:    fmt.Sprintf("IE_%d present", ie.id),
+			})
+		}
+	}
+	
+	return result
 }
 
 func extractHandoverRequiredIEs(packet unsafe.Pointer) []*InformationElement {
-	return extractGenericIEs(packet, 11) // HandoverRequired
+	var result []*InformationElement
+	log.Printf("DEBUG: Extracting HandoverRequired IEs")
+	
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.InitiatingMessage_t)(unsafe.Pointer(&pdu.choice))
+	val := (*C.HandoverRequired_t)(unsafe.Pointer(&msg.value.choice))
+
+	var ies []*C.HandoverRequiredIEs_t
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
+	slice.Cap = (int)(val.protocolIEs.list.count)
+	slice.Len = (int)(val.protocolIEs.list.count)
+	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+
+	for _, ie := range ies {
+		switch ie.id {
+		case 0: // MME-UE-S1AP-ID
+			result = append(result, &InformationElement{
+				ID:          int(ie.id),
+				Name:        "id_MME_UE_S1AP_ID",
+				Criticality: getCriticality(ie.criticality),
+				Value:       fmt.Sprintf("%d", ie.value.choice.MME_UE_S1AP_ID),
+				RawValue:    fmt.Sprintf("%d", ie.value.choice.MME_UE_S1AP_ID),
+			})
+		case 8: // eNB-UE-S1AP-ID
+			result = append(result, &InformationElement{
+				ID:          int(ie.id),
+				Name:        "id_eNB_UE_S1AP_ID",
+				Criticality: getCriticality(ie.criticality),
+				Value:       fmt.Sprintf("%d", ie.value.choice.ENB_UE_S1AP_ID),
+				RawValue:    fmt.Sprintf("%d", ie.value.choice.ENB_UE_S1AP_ID),
+			})
+		case 1: // HandoverType
+			result = append(result, &InformationElement{
+				ID:          int(ie.id),
+				Name:        "id_HandoverType",
+				Criticality: getCriticality(ie.criticality),
+				Value:       "HandoverType",
+				RawValue:    "Handover Type Present",
+			})
+		case 2: // Cause
+			result = append(result, &InformationElement{
+				ID:          int(ie.id),
+				Name:        "id_Cause",
+				Criticality: getCriticality(ie.criticality),
+				Value:       "Cause",
+				RawValue:    "Cause Present",
+			})
+		case 104: // TargetID
+			result = append(result, &InformationElement{
+				ID:          int(ie.id),
+				Name:        "id_TargetID",
+				Criticality: getCriticality(ie.criticality),
+				Value:       "TargetID",
+				RawValue:    "Target ID Present",
+			})
+		default:
+			result = append(result, &InformationElement{
+				ID:          int(ie.id),
+				Name:        fmt.Sprintf("unknown_ie_%d", ie.id),
+				Criticality: getCriticality(ie.criticality),
+				Value:       "Unknown",
+				RawValue:    fmt.Sprintf("IE_%d present", ie.id),
+			})
+		}
+	}
+	
+	return result
 }
 
 func extractUECapabilityInfoIndicationIEs(packet unsafe.Pointer) []*InformationElement {
-	return extractGenericIEs(packet, 22) // UECapabilityInfoIndication
+	var result []*InformationElement
+	log.Printf("DEBUG: Extracting UECapabilityInfoIndication IEs")
+	
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.InitiatingMessage_t)(unsafe.Pointer(&pdu.choice))
+	val := (*C.UECapabilityInfoIndication_t)(unsafe.Pointer(&msg.value.choice))
+
+	var ies []*C.UECapabilityInfoIndicationIEs_t
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
+	slice.Cap = (int)(val.protocolIEs.list.count)
+	slice.Len = (int)(val.protocolIEs.list.count)
+	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+
+	for _, ie := range ies {
+		switch ie.id {
+		case 0: // MME-UE-S1AP-ID
+			result = append(result, &InformationElement{
+				ID:          int(ie.id),
+				Name:        "id_MME_UE_S1AP_ID",
+				Criticality: getCriticality(ie.criticality),
+				Value:       fmt.Sprintf("%d", ie.value.choice.MME_UE_S1AP_ID),
+				RawValue:    fmt.Sprintf("%d", ie.value.choice.MME_UE_S1AP_ID),
+			})
+		case 8: // eNB-UE-S1AP-ID
+			result = append(result, &InformationElement{
+				ID:          int(ie.id),
+				Name:        "id_eNB_UE_S1AP_ID",
+				Criticality: getCriticality(ie.criticality),
+				Value:       fmt.Sprintf("%d", ie.value.choice.ENB_UE_S1AP_ID),
+				RawValue:    fmt.Sprintf("%d", ie.value.choice.ENB_UE_S1AP_ID),
+			})
+		case 74: // UERadioCapability
+			result = append(result, &InformationElement{
+				ID:          int(ie.id),
+				Name:        "id_UERadioCapability",
+				Criticality: getCriticality(ie.criticality),
+				Value:       "UERadioCapability",
+				RawValue:    "UE Radio Capability Present",
+			})
+		default:
+			result = append(result, &InformationElement{
+				ID:          int(ie.id),
+				Name:        fmt.Sprintf("unknown_ie_%d", ie.id),
+				Criticality: getCriticality(ie.criticality),
+				Value:       "Unknown",
+				RawValue:    fmt.Sprintf("IE_%d present", ie.id),
+			})
+		}
+	}
+	
+	return result
 }
 
 func extractUEContextModificationResponseIEs(packet unsafe.Pointer) []*InformationElement {
-	return extractGenericIEs(packet, 25) // UEContextModificationResponse
+	var result []*InformationElement
+	log.Printf("DEBUG: Extracting UEContextModificationResponse IEs")
+	
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.SuccessfulOutcome_t)(unsafe.Pointer(&pdu.choice))
+	val := (*C.UEContextModificationResponse_t)(unsafe.Pointer(&msg.value.choice))
+
+	var ies []*C.UEContextModificationResponseIEs_t
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
+	slice.Cap = (int)(val.protocolIEs.list.count)
+	slice.Len = (int)(val.protocolIEs.list.count)
+	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+
+	for _, ie := range ies {
+		switch ie.id {
+		case 0: // MME-UE-S1AP-ID
+			result = append(result, &InformationElement{
+				ID:          int(ie.id),
+				Name:        "id_MME_UE_S1AP_ID",
+				Criticality: getCriticality(ie.criticality),
+				Value:       fmt.Sprintf("%d", ie.value.choice.MME_UE_S1AP_ID),
+				RawValue:    fmt.Sprintf("%d", ie.value.choice.MME_UE_S1AP_ID),
+			})
+		case 8: // eNB-UE-S1AP-ID
+			result = append(result, &InformationElement{
+				ID:          int(ie.id),
+				Name:        "id_eNB_UE_S1AP_ID",
+				Criticality: getCriticality(ie.criticality),
+				Value:       fmt.Sprintf("%d", ie.value.choice.ENB_UE_S1AP_ID),
+				RawValue:    fmt.Sprintf("%d", ie.value.choice.ENB_UE_S1AP_ID),
+			})
+		default:
+			result = append(result, &InformationElement{
+				ID:          int(ie.id),
+				Name:        fmt.Sprintf("unknown_ie_%d", ie.id),
+				Criticality: getCriticality(ie.criticality),
+				Value:       "Unknown",
+				RawValue:    fmt.Sprintf("IE_%d present", ie.id),
+			})
+		}
+	}
+	
+	return result
 }
+
+// ===== FONCTIONS STUB POUR LES AUTRES PROCÉDURES =====
 
 func extractS1SetupResponseIEs(packet unsafe.Pointer) []*InformationElement {
 	return extractGenericIEs(packet, 1) // S1SetupResponse
@@ -1764,11 +1974,7 @@ func extractInitialContextSetupResponseIEs(packet unsafe.Pointer) []*Information
 }
 
 func extractHandoverCommandIEs(packet unsafe.Pointer) []*InformationElement {
-	return extractGenericIEs(packet, 12) // HandoverCommand
-}
-
-func extractUEContextModificationFailureIEs(packet unsafe.Pointer) []*InformationElement {
-	return extractGenericIEs(packet, 26) // UEContextModificationFailure
+	return extractGenericIEs(packet, 4) // HandoverCommand
 }
 
 func extractS1SetupFailureIEs(packet unsafe.Pointer) []*InformationElement {
@@ -1777,6 +1983,10 @@ func extractS1SetupFailureIEs(packet unsafe.Pointer) []*InformationElement {
 
 func extractInitialContextSetupFailureIEs(packet unsafe.Pointer) []*InformationElement {
 	return extractGenericIEs(packet, 10) // InitialContextSetupFailure
+}
+
+func extractUEContextModificationFailureIEs(packet unsafe.Pointer) []*InformationElement {
+	return extractGenericIEs(packet, 26) // UEContextModificationFailure
 }
 
 func extractERABSetupFailureIEs(packet unsafe.Pointer) []*InformationElement {
