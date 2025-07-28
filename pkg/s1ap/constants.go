@@ -84,7 +84,7 @@ const (
 // S1AP Procedure Codes (based on the provided mapping)
 var S1AP_PROCEDURE_CODES = map[int]string{
 	0:  "HandoverPreparation",
-	1:  "HandoverResourceAllocation", 
+	1:  "HandoverResourceAllocation",
 	2:  "HandoverNotification",
 	3:  "PathSwitchRequest",
 	4:  "HandoverCancel",

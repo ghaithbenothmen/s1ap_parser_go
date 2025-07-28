@@ -5,8 +5,10 @@
 
 # Variables
 BINARY_NAME=s1ap-analyzer
+SESSION_QUERY_BINARY=session-query
 BUILD_DIR=build
 CMD_DIR=cmd/s1ap-analyzer
+SESSION_CMD_DIR=cmd/session-query
 PKG_DIR=pkg
 TOOLS_DIR=tools
 EXAMPLES_DIR=examples
@@ -24,7 +26,7 @@ GOFMT=$(GOCMD) fmt
 LDFLAGS=-ldflags "-X main.version=$(shell git describe --tags --always --dirty) -X main.buildTime=$(shell date -u '+%Y-%m-%d_%H:%M:%S')"
 
 # Default target
-all: clean build
+all: clean build-all-tools
 
 # Build the main application
 build:
@@ -32,6 +34,17 @@ build:
 	@mkdir -p $(BUILD_DIR)
 	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./$(CMD_DIR)
 	@echo "✅ Build complete: $(BUILD_DIR)/$(BINARY_NAME)"
+
+# Build session query tool
+build-session-query:
+	@echo "🔨 Building $(SESSION_QUERY_BINARY)..."
+	@mkdir -p $(BUILD_DIR)
+	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(SESSION_QUERY_BINARY) ./$(SESSION_CMD_DIR)
+	@echo "✅ Build complete: $(BUILD_DIR)/$(SESSION_QUERY_BINARY)"
+
+# Build all tools
+build-all-tools: build build-session-query
+	@echo "✅ All tools built successfully"
 
 # Build development version
 dev:
