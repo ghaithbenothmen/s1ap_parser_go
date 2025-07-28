@@ -1,58 +1,61 @@
-# CoreSwitch S1AP Protocol Suite
+# CoreSwitch S1AP Analyzer
 
-A professional, unified S1AP protocol analysis and management suite for 3GPP core network components.
-
-## Overview
-
-CoreSwitch provides comprehensive tools for:
-- **S1AP Protocol Analysis**: Analyze S1AP messages from PCAP files with detailed statistics
-- **Session Management**: Query and manage UE sessions with MongoDB storage
-- **Core Network Components**: MME and HSS server implementations
-- **Professional Logging**: Structured, configurable logging system
+A professional, high-performance S1AP (S1 Application Protocol) analyzer for PCAP files. This tool provides comprehensive analysis of S1AP messages used in LTE/4G networks between eNodeB and MME, with advanced MongoDB session storage capabilities.
 
 ## Features
 
-### 🔍 S1AP Protocol Analyzer
-- Parse and analyze S1AP messages from PCAP files
-- Support for multiple output formats (simple, detailed, JSON)
-- Real-time session tracking and MongoDB storage
-- Comprehensive procedure statistics
-- Professional logging with configurable levels
+- **Comprehensive S1AP Support**: Analyzes all 67 S1AP procedure types
+- **Multiple Output Formats**: Simple, detailed, and JSON output formats
+- **MongoDB Session Storage**: Real-time storage and analysis of UE sessions
+- **Session Management**: Track complete UE session lifecycles based on eNB-UE-S1AP-ID
+- **High Performance**: Optimized for large PCAP files with packet limiting
+- **Professional CLI**: Clean command-line interface with extensive options
+- **Accurate Parsing**: Real procedure code extraction from ASN.1 APER encoding
+- **Statistics**: Detailed analysis statistics and procedure breakdowns
+- **Session Query Tools**: Advanced MongoDB querying and analysis tools
+- **Cross-Platform**: Builds for Linux, macOS, and Windows
 
-### 📊 Session Query Engine
-- Query UE sessions by various criteria (eNB ID, MME ID, status)
-- Global session statistics and analytics
-- Top procedure analysis per eNB
-- Multiple output formats (table, JSON, summary)
+## Supported S1AP Procedures
 
-### 🏗️ Core Network Servers
-- **MME**: Mobility Management Entity implementation
-- **HSS**: Home Subscriber Server implementation
-- Production-ready server components
+The analyzer supports all standard S1AP procedures including:
+- Paging, Initial UE Message, UL/DL NAS Transport
+- Handover procedures, E-RAB management
+- UE Context operations, Status transfers
+- Configuration updates, Error handling
+- And many more...
 
-### 📝 Professional Architecture
-- Unified command-line interface
-- Modular, maintainable codebase
-- Comprehensive error handling
-- Clean, professional logging (no emojis)
-- Extensible configuration system
+## MongoDB Session Storage
+
+The analyzer now includes advanced MongoDB integration for real-time session storage:
+
+- **Real-time Storage**: S1AP messages are stored in MongoDB during decoding
+- **UE Session Tracking**: Messages are organized by UE sessions using eNB-UE-S1AP-ID
+- **Session Evolution**: Automatic updates when new messages arrive for existing sessions
+- **Lifecycle Management**: Track session creation, evolution, and termination
+- **Advanced Querying**: Powerful tools to search and analyze stored sessions
+
+### Key Benefits
+
+- **Session Correlation**: All messages from the same UE are grouped together
+- **Time-series Analysis**: Track UE behavior over time
+- **Scalable Storage**: Handle large volumes of S1AP traffic
+- **Flexible Queries**: Search by eNB, MME, procedure type, time ranges
+- **Real-time Processing**: No need to wait for complete analysis
 
 ## Installation
 
 ### Prerequisites
-- Go 1.19 or later
-- MongoDB (for session storage)
-- libpcap development headers
 
-### Build from Source
+- Go 1.19 or later
+- libpcap development libraries
+- ASN.1 C libraries (included)
+
+### Quick Install
 
 ```bash
 # Clone the repository
-git clone https://github.com/ghaithbenothmen/coreswitch.git
+git clone https://github.com/coreswitch/coreswitch.git
 cd coreswitch
-
-# Install dependencies
-make deps
 
 # Build the application
 make build
@@ -65,215 +68,268 @@ make install
 
 ```bash
 # Complete development environment setup
-make deps format check test build
-
-# Run tests with coverage
-make test-coverage
-
-# Development build with debug symbols
-make dev
+make dev-setup
 ```
 
 ## Usage
 
-### S1AP Protocol Analysis
+### Basic Usage
 
 ```bash
-# Basic analysis
-coreswitch s1ap-analyzer capture.pcap
+# Analyze a PCAP file
+./build/s1ap-analyzer capture.pcap
 
-# Detailed analysis with JSON output
-coreswitch s1ap-analyzer -format json -limit 1000 capture.pcap
+# Show statistics only
+./build/s1ap-analyzer -stats capture.pcap
 
-# Store sessions in MongoDB
-coreswitch s1ap-analyzer -mongo-store -debug capture.pcap
+# Limit analysis to first 1000 packets
+./build/s1ap-analyzer -limit 1000 capture.pcap
+```
+
+### Advanced Usage
+
+```bash
+# Detailed output format
+./build/s1ap-analyzer -format detailed capture.pcap
+
+# JSON output for programmatic processing
+./build/s1ap-analyzer -format json capture.pcap > analysis.json
+
+# Debug mode for troubleshooting
+./build/s1ap-analyzer -debug capture.pcap
+
+# Show help
+./build/s1ap-analyzer -help
+```
+
+### MongoDB Session Storage
+
+```bash
+# Analyze and store sessions in MongoDB
+./build/s1ap-analyzer -mongo-store capture.pcap
 
 # Custom MongoDB configuration
-coreswitch s1ap-analyzer \
+./build/s1ap-analyzer \
   -mongo-store \
   -mongo-uri "mongodb://localhost:27017" \
   -mongo-db "s1ap_analysis" \
   -mongo-collection "ue_sessions" \
   capture.pcap
 
-# Statistics only
-coreswitch s1ap-analyzer -stats capture.pcap
+# Real-time analysis with debug output
+./build/s1ap-analyzer -mongo-store -debug -limit 1000 capture.pcap
 ```
 
 ### Session Querying
 
 ```bash
+# Build the session query tool
+make build-session-query
+
 # List all active sessions
-coreswitch session-query -command list -status active
+./build/session-query -command list -status active
 
 # Find sessions for specific eNB
-coreswitch session-query -command find -enb-id 123
+./build/session-query -command find -enb-id 123
 
 # Show global statistics
-coreswitch session-query -command stats
+./build/session-query -command stats
 
 # Top procedures for an eNB
-coreswitch session-query -command procedures -enb-id 123
+./build/session-query -command procedures -enb-id 123
 
 # Export sessions to JSON
-coreswitch session-query -command list -format json > sessions.json
+./build/session-query -command list -format json > sessions.json
 ```
-
-### Core Network Servers
-
-```bash
-# Start MME server
-coreswitch mme -debug -port 3868
-
-# Start HSS server
-coreswitch hss -verbose -port 3869
-```
-
-### Global Options
-
-All commands support these global options:
-- `-debug`: Enable debug logging
-- `-verbose`: Enable verbose logging with caller information
-- `-log-level`: Set log level (DEBUG, INFO, WARN, ERROR, FATAL)
-
-## Configuration
-
-### MongoDB Configuration
-- **URI**: Connection string (default: `mongodb://10.200.0.21:27017`)
-- **Database**: Database name (default: `s1ap_db`)
-- **Collection**: Collection name (default: `messages`)
 
 ### Output Formats
 
-#### S1AP Analyzer
-- **simple**: Human-readable YAML-like format
-- **detailed**: Enhanced simple format with additional information
-- **json**: Structured JSON output
-
-#### Session Query
-- **table**: Formatted table view
-- **json**: Structured JSON output
-- **summary**: Condensed statistics view
-
-## API Reference
-
-### Command Structure
-
+#### Simple Format (Default)
 ```
-coreswitch <command> [global-options] [command-options]
+2025/07/23 10:48:48 PDU type: InitiatingMessage
+2025/07/23 10:48:48 Message type: Paging
+packet_number: 4
+timestamp: 1737102645.014235
+timestamp_human: 2025-01-17 09:30:45.014
+src_ip: 10.3.3.112
+dst_ip: 10.73.100.58
+s1ap_pdu:
+  type: initiatingMessage
+  type_code: 0
+procedure:
+  name: Paging
+  code: 10
+  criticality: ignore
 ```
 
-### Commands
-
-#### `s1ap-analyzer`
-Analyze S1AP messages from PCAP files.
-
-**Options:**
-- `-format string`: Output format (simple, detailed, json)
-- `-limit int`: Limit number of packets to analyze
-- `-stats`: Show statistics summary only
-- `-mongo-store`: Enable MongoDB storage
-- `-mongo-uri string`: MongoDB connection URI
-- `-mongo-db string`: MongoDB database name
-- `-mongo-collection string`: MongoDB collection name
-
-#### `session-query`
-Query S1AP sessions from MongoDB.
-
-**Options:**
-- `-command string`: Command to execute (list, find, stats, procedures)
-- `-enb-id string`: eNB ID for filtering
-- `-mme-id string`: MME ID for filtering
-- `-status string`: Session status filter (active, released)
-- `-format string`: Output format (table, json, summary)
-- `-limit int`: Limit number of results
-
-#### `mme`
-Start MME server.
-
-**Options:**
-- `-listen string`: Listen address (default: 0.0.0.0)
-- `-port int`: Listen port (default: 8080)
-
-#### `hss`
-Start HSS server.
-
-**Options:**
-- `-listen string`: Listen address (default: 0.0.0.0)
-- `-port int`: Listen port (default: 8080)
+#### JSON Format
+```json
+{
+  "messages": [
+    {
+      "packet_number": 4,
+      "timestamp": "2025-01-17T09:30:45.014235Z",
+      "src_ip": "10.3.3.112",
+      "dst_ip": "10.73.100.58",
+      "pdu_type": "initiatingMessage",
+      "pdu_type_code": 0,
+      "procedure_name": "Paging",
+      "procedure_code": 10,
+      "criticality": "ignore"
+    }
+  ],
+  "statistics": {
+    "total_frames": 1000,
+    "s1ap_frames": 245,
+    "successful_decodes": 220,
+    "procedure_stats": {
+      "Paging": 154,
+      "downlinkNASTransport": 22,
+      "CellTrafficTrace": 18
+    }
+  }
+}
+```
 
 ## Architecture
 
-### Project Structure
+The project follows a clean, modular architecture:
 
 ```
-├── main.go                 # Unified entry point
+coreswitch/
+├── cmd/
+│   └── s1ap-analyzer/     # Main application
 ├── pkg/
-│   ├── analyzer/          # S1AP analysis engine
-│   ├── config/            # Configuration management
-│   ├── logger/            # Professional logging system
-│   ├── sessionquery/      # Session query service
-│   ├── db/               # Database utilities
-│   ├── s1ap/             # S1AP protocol implementation
-│   ├── mme/              # MME server
-│   └── hss/              # HSS server
-├── build/                # Build artifacts
-└── docs/                 # Documentation
+│   ├── s1ap/              # S1AP protocol library
+│   ├── hss/               # HSS server components
+│   └── mme/               # MME server components
+├── tools/                 # Development tools
+├── examples/              # Usage examples
+├── docs/                  # Documentation
+├── testdata/              # Test PCAP files
+└── build/                 # Build outputs
 ```
 
-### Key Components
+## Testing
 
-- **Unified CLI**: Single entry point with subcommands
-- **Modular Architecture**: Clean separation of concerns
-- **Professional Logging**: Structured, configurable logging
-- **Configuration Management**: Centralized configuration system
-- **Error Handling**: Comprehensive error handling and validation
+```bash
+# Run all tests
+make test
+
+# Run tests with coverage
+make test-coverage
+
+# Lint code
+make lint
+```
 
 ## Development
 
-### Makefile Targets
+### Building
 
 ```bash
-make help          # Show all available targets
-make build         # Build the application
-make test          # Run tests
-make format        # Format code
-make check         # Run code quality checks
-make lint          # Run linter (requires golangci-lint)
-make clean         # Clean build artifacts
-make release       # Build for multiple platforms
+# Development build with race detector
+make dev
+
+# Build for multiple platforms
+make build-all
+
+# Clean build artifacts
+make clean
 ```
 
 ### Code Quality
 
-The project maintains high code quality standards:
-- Go formatting with `gofmt`
-- Static analysis with `go vet`
-- Linting with `golangci-lint`
-- Comprehensive test coverage
-- Professional error handling
+```bash
+# Format code
+make fmt
+
+# Run linter
+make lint
+
+# Full development workflow
+make dev-setup
+```
+
+## Performance
+
+The analyzer is optimized for performance:
+- **Memory Efficient**: Streams PCAP data without loading entire file
+- **Fast Processing**: Optimized S1AP parsing with minimal allocations
+- **Scalable**: Handles large PCAP files (GB+) efficiently
+- **Configurable**: Packet limiting for quick analysis
 
 ## Contributing
 
 1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests: `make test`
-5. Format code: `make format`
-6. Run checks: `make check`
-7. Submit a pull request
+2. Create a feature branch: `git checkout -b feature/amazing-feature`
+3. Make your changes and add tests
+4. Run the test suite: `make test`
+5. Commit your changes: `git commit -m 'Add amazing feature'`
+6. Push to the branch: `git push origin feature/amazing-feature`
+7. Open a Pull Request
 
-## License
+### Development Guidelines
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+- Follow Go best practices and conventions
+- Add tests for new functionality
+- Update documentation for user-facing changes
+- Run `make lint` before submitting
+
+
+## Acknowledgments
+
+- ASN.1 C libraries for S1AP protocol support
+- GoPacket library for PCAP processing
+- The telecommunications community for S1AP specifications
 
 ## Support
 
-For support and questions:
-- Create an issue on GitHub
-- Check the documentation in the `docs/` directory
-- Review the examples and usage patterns
+For questions, issues, or contributions:
+- Open an issue on GitHub
+- Check the documentation in `docs/`
+- Review examples in `examples/`
 
 ---
 
-**CoreSwitch** - Professional S1AP Protocol Suite
+**Professional S1AP Analysis Made Simple** 
+
+----
+
+coreswitch is an open soruce project for EPC (Evolved Packet Core) of LTE and 5G
+infrastructure. Right now we are implementing MME (Mobility Management Entity).
+Other component will be implemented later on.
+
+----
+
+## Supported Platform
+
+Right now only Ubuntu 18.04 is supported.
+
+## Build
+
+To build the system.  ASN1 handling C library needs to be built.
+
+``` shell
+$ cd coreswitch/pkg/s1ap/asn1
+$ make lib
+$ sudo make install
+```
+
+After this
+
+``` shell
+$ go get github.com/coreswitch/coreswitch/cmd/mmed
+```
+
+will build mmed.
+
+## Run
+
+Just simply execute `mmed` will start MME handling on all of interfaces.
+
+``` shell
+$ mmed
+2019/08/28 14:21:42 Listen on 127.0.0.1/[::1%lo]/10.211.55.26/[fe80::38e7:5a76:4355:51d7%enp0s5]/[fe80::79d1:506d:7682:9ee5%enp0s6]/[fe80::cd97:63f4:fcad:b2c5%enp0s7]/172.18.0.1/172.17.0.1:36412
+
+```
