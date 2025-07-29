@@ -27,6 +27,8 @@ import (
 	"log"
 	"os"
 	"sort"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/google/gopacket"
@@ -61,6 +63,7 @@ type Config struct {
 	MongoURI        string 
 	MongoDB         string 
 	MongoCollection string 
+	SessionsFile    string // Path to store completed sessions JSON file
 }
 
 // S1APMessage represents a parsed S1AP message
@@ -89,6 +92,7 @@ type Statistics struct {
 	ProcessingTime   time.Duration      `json:"processing_time"`
 	StartTime        time.Time          `json:"start_time"`
 	EndTime          time.Time          `json:"end_time"`
+	CompletedSessions int               `json:"completed_sessions"`
 }
 
 // UeSessionDocument représente une session UE dans MongoDB
@@ -144,6 +148,7 @@ func parseFlags() *Config {
 	flag.StringVar(&config.MongoURI, "mongo-uri", "mongodb://10.200.0.21:27017", "MongoDB connection URI")
 	flag.StringVar(&config.MongoDB, "mongo-db", "s1ap_db", "MongoDB database name")
 	flag.StringVar(&config.MongoCollection, "mongo-collection", "messages", "MongoDB collection name for S1AP messages")
+	flag.StringVar(&config.SessionsFile, "sessions-file", "completed_sessions.json", "Path to store completed sessions JSON file")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "S1AP Protocol Analyzer\n")
@@ -162,6 +167,7 @@ func parseFlags() *Config {
 		fmt.Fprintf(os.Stderr, "  -mongo-uri string\n\tMongoDB connection URI. (default \"mongodb://10.200.0.21:27017\")\n")
 		fmt.Fprintf(os.Stderr, "  -mongo-db string\n\tMongoDB database name. (default \"s1ap_db\")\n")
 		fmt.Fprintf(os.Stderr, "  -mongo-collection string\n\tMongoDB collection name. (default \"messages\")\n")
+		fmt.Fprintf(os.Stderr, "  -sessions-file string\n\tPath to store completed sessions JSON file. (default \"completed_sessions.json\")\n")
 	}
 	
 	flag.Parse()
@@ -178,6 +184,8 @@ type Analyzer struct {
 	config *Config
 	stats  *Statistics
 	mongoCollection *mongo.Collection 
+	sessionsFileMutex sync.Mutex // Protects concurrent access to sessions file
+	activeSessionHandlers sync.WaitGroup // Tracks active session completion handlers
 }
 
 // NewAnalyzer creates a new analyzer instance
@@ -198,15 +206,46 @@ func NewAnalyzer(config *Config) *Analyzer {
 		}
 		analyzer.mongoCollection = collection
 		log.Printf("INFO: MongoDB storage enabled - DB: %s, Collection: %s", config.MongoDB, config.MongoCollection)
+		log.Printf("INFO: Completed sessions will be saved to: %s", config.SessionsFile)
+		
+		// Initialiser le fichier de sessions si nécessaire
+		analyzer.initializeSessionsFile()
 	}
 
 	return analyzer
+}
+
+// initializeSessionsFile crée le fichier de sessions s'il n'existe pas
+func (a *Analyzer) initializeSessionsFile() {
+	if _, err := os.Stat(a.config.SessionsFile); os.IsNotExist(err) {
+		// Créer un fichier JSON vide avec un tableau
+		emptyArray := []interface{}{}
+		data, err := json.MarshalIndent(emptyArray, "", "  ")
+		if err != nil {
+			log.Printf("WARN: Failed to initialize sessions file: %v", err)
+			return
+		}
+		
+		if err := os.WriteFile(a.config.SessionsFile, data, 0644); err != nil {
+			log.Printf("WARN: Failed to create sessions file: %v", err)
+		} else {
+			log.Printf("INFO: Created new sessions file: %s", a.config.SessionsFile)
+		}
+	} else {
+		log.Printf("INFO: Using existing sessions file: %s", a.config.SessionsFile)
+	}
 }
 
 
 // Run executes the analysis
 func (a *Analyzer) Run() error {
 	defer func() {
+		// Attendre que tous les gestionnaires de session se terminent
+		if a.config.MongoStore {
+			log.Printf("INFO: Waiting for session completion handlers to finish...")
+			a.activeSessionHandlers.Wait()
+		}
+		
 		a.stats.EndTime = time.Now()
 		a.stats.ProcessingTime = a.stats.EndTime.Sub(a.stats.StartTime)
 	}()
@@ -240,7 +279,7 @@ func (a *Analyzer) Run() error {
 	return a.outputResults(processedMessages)
 }
 
-func extractUeIdentifiers(msg *S1APMessage) (mmeID, enbID int64) {
+func (a *Analyzer) extractUeIdentifiers(msg *S1APMessage) (mmeID, enbID int64) {
 	mmeID, enbID = -1, -1 // Valeurs par défaut si non trouvés
 
 	for _, ie := range msg.IEs {
@@ -248,14 +287,152 @@ func extractUeIdentifiers(msg *S1APMessage) (mmeID, enbID int64) {
 		case 0: // id_MME_UE_S1AP_ID
 			if val, ok := ie.Value.(int32); ok {
 				mmeID = int64(val)
+			} else if val, ok := ie.Value.(int64); ok {
+				mmeID = val
+			} else if val, ok := ie.Value.(int); ok {
+				mmeID = int64(val)
+			} else if ie.RawValue != "" && ie.RawValue != "Binary data not extracted" && ie.RawValue != "Fallback placeholder" {
+				if parsedVal, err := strconv.ParseInt(ie.RawValue, 10, 64); err == nil {
+					mmeID = parsedVal
+				}
 			}
 		case 8: // id_eNB_UE_S1AP_ID
 			if val, ok := ie.Value.(int32); ok {
 				enbID = int64(val)
+			} else if val, ok := ie.Value.(int64); ok {
+				enbID = val
+			} else if val, ok := ie.Value.(int); ok {
+				enbID = int64(val)
+			} else if ie.RawValue != "" && ie.RawValue != "Binary data not extracted" && ie.RawValue != "Fallback placeholder" {
+				if parsedVal, err := strconv.ParseInt(ie.RawValue, 10, 64); err == nil {
+					enbID = parsedVal
+				}
 			}
 		}
 	}
-	return
+	
+	// Debug pour tous les messages qui ont des identifiants UE
+	if (mmeID != -1 || enbID != -1) && a.config.Debug {
+		log.Printf("DEBUG: %s - MME_UE_S1AP_ID: %d, eNB_UE_S1AP_ID: %d (Total IEs: %d)", 
+			msg.ProcedureName, mmeID, enbID, len(msg.IEs))
+		for i, ie := range msg.IEs {
+			log.Printf("DEBUG: IE[%d] - ID: %d, Name: %s, Value: %v (type: %T), RawValue: %s", 
+				i, ie.ID, ie.Name, ie.Value, ie.Value, ie.RawValue)
+		}
+	}
+
+	return mmeID, enbID
+}
+
+// handlePagingMessage traite les messages de paging qui peuvent contenir des identifiants UE
+func (a *Analyzer) handlePagingMessage(msg *S1APMessage) error {
+	// Dans Paging, les identifiants UE peuvent être dans UEPagingID ou S-TMSI
+	var ueIdentifier string
+
+	for _, ie := range msg.IEs {
+		switch ie.ID {
+		case 43: // id_UEPagingID
+			if ie.RawValue != "" {
+				ueIdentifier = ie.RawValue
+			}
+		case 96: // id_S_TMSI
+			if ie.RawValue != "" {
+				ueIdentifier = ie.RawValue
+			}
+		case 89: // id_MMEname (peut aider à identifier la source)
+			// Pour information additionnelle
+		}
+	}
+
+	if ueIdentifier != "" && a.config.Debug {
+		log.Printf("DEBUG: Paging message with UE identifier: %s (Packet %d)", ueIdentifier, msg.PacketNumber)
+	}
+
+	// Pour l'instant, on ne les ajoute pas aux sessions UE car ils n'ont pas d'eNB_UE_S1AP_ID
+	// mais on pourrait les traiter séparément ou les ajouter à une collection de messages généraux
+	return nil
+}
+
+// handleDownlinkNASTransport traite les messages DownlinkNASTransport qui devraient avoir des identifiants UE
+func (a *Analyzer) handleDownlinkNASTransport(msg *S1APMessage) error {
+	// DownlinkNASTransport devrait normalement avoir MME_UE_S1AP_ID et eNB_UE_S1AP_ID
+	// Si ils ne sont pas détectés, c'est peut-être un problème d'extraction
+	
+	if a.config.Debug {
+		log.Printf("DEBUG: DownlinkNASTransport IEs analysis:")
+		for i, ie := range msg.IEs {
+			log.Printf("DEBUG: IE[%d] - ID: %d, Name: %s, Value: %v, RawValue: %s", 
+				i, ie.ID, ie.Name, ie.Value, ie.RawValue)
+		}
+	}
+
+	// Essayer d'extraire des identifiants avec une logique plus permissive
+	mmeID, enbID := a.extractUeIdentifiersExtended(msg)
+	
+	if enbID != -1 {
+		return a.addMessageToSession(msg, mmeID, enbID)
+	}
+
+	return nil
+}
+
+// handleMessageWithAlternativeIdentifiers essaie d'extraire des identifiants alternatifs
+func (a *Analyzer) handleMessageWithAlternativeIdentifiers(msg *S1APMessage) error {
+	// Essayer d'extraire des identifiants avec une logique étendue
+	mmeID, enbID := a.extractUeIdentifiersExtended(msg)
+	
+	if enbID != -1 {
+		return a.addMessageToSession(msg, mmeID, enbID)
+	}
+	
+	// Si pas d'identifiants trouvés, debug et ignorer
+	if a.config.Debug {
+		log.Printf("DEBUG: No UE identifiers found for %s (Packet %d)", msg.ProcedureName, msg.PacketNumber)
+	}
+	
+	return nil
+}
+
+// extractUeIdentifiersExtended utilise une logique plus permissive pour extraire les identifiants UE
+func (a *Analyzer) extractUeIdentifiersExtended(msg *S1APMessage) (mmeID, enbID int64) {
+	mmeID, enbID = -1, -1
+
+	for _, ie := range msg.IEs {
+		switch ie.ID {
+		case 0: // id_MME_UE_S1AP_ID
+			if val, ok := ie.Value.(int32); ok {
+				mmeID = int64(val)
+			} else if val, ok := ie.Value.(int64); ok {
+				mmeID = val
+			} else if val, ok := ie.Value.(int); ok {
+				mmeID = int64(val)
+			} else if ie.RawValue != "" && ie.RawValue != "Binary data not extracted" && ie.RawValue != "Fallback placeholder" {
+				if parsedVal, err := strconv.ParseInt(ie.RawValue, 10, 64); err == nil {
+					mmeID = parsedVal
+				}
+			}
+		case 8: // id_eNB_UE_S1AP_ID
+			if val, ok := ie.Value.(int32); ok {
+				enbID = int64(val)
+			} else if val, ok := ie.Value.(int64); ok {
+				enbID = val
+			} else if val, ok := ie.Value.(int); ok {
+				enbID = int64(val)
+			} else if ie.RawValue != "" && ie.RawValue != "Binary data not extracted" && ie.RawValue != "Fallback placeholder" {
+				if parsedVal, err := strconv.ParseInt(ie.RawValue, 10, 64); err == nil {
+					enbID = parsedVal
+				}
+			}
+		}
+		
+		// Pour debug - montrer tous les IEs potentiels
+		if a.config.Debug && (ie.ID == 0 || ie.ID == 8) {
+			log.Printf("DEBUG: Extended extraction - IE ID: %d, Name: %s, Value: %v (type: %T), RawValue: %s", 
+				ie.ID, ie.Name, ie.Value, ie.Value, ie.RawValue)
+		}
+	}
+
+	return mmeID, enbID
 }
 
 // processAndStoreMessage traite et stocke un message S1AP dans MongoDB
@@ -265,32 +442,81 @@ func (a *Analyzer) processAndStoreMessage(msg *S1APMessage) error {
 		return nil // Ne rien faire si MongoDB n'est pas configuré
 	}
 
-	mmeID, enbID := extractUeIdentifiers(msg)
+	mmeID, enbID := a.extractUeIdentifiers(msg)
 
-	// Un identifiant eNB est presque toujours présent pour les messages liés à l'UE.
-	if enbID == -1 {
-		// Ce message n'est probablement pas lié à une session UE spécifique (ex: S1Setup)
-		// On pourrait le stocker dans une autre collection ou l'ignorer pour le contexte de session.
-		if a.config.Debug {
-			log.Printf("DEBUG: Message sans eNB_UE_S1AP_ID, ignoré pour le stockage de session (Packet %d, Proc: %s)", msg.PacketNumber, msg.ProcedureName)
-		}
-		return nil
+	// Debug pour voir tous les messages traités
+	if a.config.Debug {
+		log.Printf("DEBUG: Processing message - Packet: %d, Procedure: %s, MME_ID: %d, eNB_ID: %d, SrcIP: %s, DstIP: %s", 
+			msg.PacketNumber, msg.ProcedureName, mmeID, enbID, msg.SrcIP, msg.DstIP)
 	}
 
+	// Messages qui appartiennent à une session UE spécifique (ont un eNB_UE_S1AP_ID)
+	if enbID != -1 {
+		// Pour UEContextReleaseComplete, finaliser la session après l'ajout
+		if msg.ProcedureName == "UEContextReleaseComplete" {
+			// Ajouter le message à la session avant de la finaliser
+			if err := a.addMessageToSession(msg, mmeID, enbID); err != nil {
+				log.Printf("WARN: Failed to add UEContextReleaseComplete to session: %v", err)
+			}
+			
+			// Finaliser la session
+			log.Printf("INFO: UEContextReleaseComplete détecté - finalisation de la session (MME: %d, eNB: %d)", mmeID, enbID)
+			a.activeSessionHandlers.Add(1)
+			go func() {
+				defer a.activeSessionHandlers.Done()
+				time.Sleep(100 * time.Millisecond)
+				if err := a.handleCompletedSession(mmeID, enbID); err != nil {
+					log.Printf("ERROR: Failed to handle completed session: %v", err)
+				}
+			}()
+			return nil
+		}
+
+		// Pour tous les autres messages UE-spécifiques, les ajouter à la session
+		return a.addMessageToSession(msg, mmeID, enbID)
+	}
+
+	// Messages généraux (sans eNB_UE_S1AP_ID) - les traiter différemment selon le type
+	switch msg.ProcedureName {
+	case "Paging":
+		// Paging peut contenir des identifiants UE dans d'autres IEs
+		return a.handlePagingMessage(msg)
+	case "DownlinkNASTransport":
+		// DownlinkNASTransport devrait normalement avoir des identifiants UE
+		if a.config.Debug {
+			log.Printf("DEBUG: DownlinkNASTransport sans eNB_UE_S1AP_ID - possibles identifiants alternatifs à extraire (Packet %d)", msg.PacketNumber)
+		}
+		return a.handleDownlinkNASTransport(msg)
+	case "S1Setup", "Reset", "ErrorIndication", "OverloadStart", "OverloadStop":
+		// Messages de gestion générale - pas liés à des sessions UE spécifiques
+		if a.config.Debug {
+			log.Printf("DEBUG: Message de gestion générale ignoré pour sessions UE (Packet %d, Proc: %s)", msg.PacketNumber, msg.ProcedureName)
+		}
+		return nil
+	default:
+		// Autres messages - essayer d'extraire des identifiants alternatifs
+		if a.config.Debug {
+			log.Printf("DEBUG: Message sans eNB_UE_S1AP_ID (Packet %d, Proc: %s) - recherche d'identifiants alternatifs", msg.PacketNumber, msg.ProcedureName)
+		}
+		return a.handleMessageWithAlternativeIdentifiers(msg)
+	}
+}
+
+// addMessageToSession ajoute un message à une session existante ou en crée une nouvelle
+func (a *Analyzer) addMessageToSession(msg *S1APMessage, mmeID, enbID int64) error {
 	// Créer un ID de session. Si mmeID n'est pas encore là, on utilise une valeur temporaire.
 	sessionID := a.generateSessionID(mmeID, enbID)
 	
 	// Le filtre pour trouver le document de la session
-	// Stratégie: chercher d'abord par eNB_UE_S1AP_ID, puis affiner si nécessaire
 	filter := bson.M{"enb_ue_s1ap_id": enbID}
 	
 	// Si on a un mmeID dans ce message et qu'il n'est pas -1, on peut être plus spécifique
 	if mmeID != -1 {
-		// Chercher une session avec cette combinaison eNB+MME ou une session avec seulement eNB
 		filter = bson.M{
 			"$or": []bson.M{
 				{"enb_ue_s1ap_id": enbID, "mme_ue_s1ap_id": mmeID},
 				{"enb_ue_s1ap_id": enbID, "mme_ue_s1ap_id": bson.M{"$exists": false}},
+				{"enb_ue_s1ap_id": enbID, "session_id": bson.M{"$regex": fmt.Sprintf("^enb_%d_temp", enbID)}},
 			},
 		}
 	}
@@ -300,7 +526,7 @@ func (a *Analyzer) processAndStoreMessage(msg *S1APMessage) error {
 
 	// La mise à jour principale
 	update := bson.M{
-		"$push": bson.M{"messages": msg}, // Ajoute le message au tableau
+		"$push": bson.M{"messages": msg},
 		"$set": bson.M{
 			"last_update":    now,
 			"session_id":     sessionID,
@@ -310,7 +536,7 @@ func (a *Analyzer) processAndStoreMessage(msg *S1APMessage) error {
 			"message_count": 1,
 			"procedure_stats." + msg.ProcedureName: 1,
 		},
-		"$setOnInsert": bson.M{ // Champs à définir uniquement lors de la création
+		"$setOnInsert": bson.M{
 			"enb_ue_s1ap_id":     enbID,
 			"creation_timestamp": now,
 			"status":             "active",
@@ -323,11 +549,6 @@ func (a *Analyzer) processAndStoreMessage(msg *S1APMessage) error {
 	// Si mmeID est présent dans ce paquet, on l'ajoute à la clause $set
 	if mmeID != -1 {
 		update["$set"].(bson.M)["mme_ue_s1ap_id"] = mmeID
-	}
-
-	// Déterminer si la session est terminée
-	if a.isSessionEndingProcedure(msg.ProcedureName) {
-		update["$set"].(bson.M)["status"] = "released"
 	}
 
 	opts := options.Update().SetUpsert(true)
@@ -353,28 +574,162 @@ func (a *Analyzer) processAndStoreMessage(msg *S1APMessage) error {
 
 // generateSessionID génère un identifiant unique pour la session
 func (a *Analyzer) generateSessionID(mmeID, enbID int64) string {
-	if mmeID != -1 {
+	if mmeID != -1 && enbID != -1 {
 		return fmt.Sprintf("enb_%d_mme_%d", enbID, mmeID)
 	}
-	// Si mmeID n'est pas encore connu, utiliser un ID temporaire
-	return fmt.Sprintf("enb_%d_temp_%d", enbID, time.Now().UnixNano()%10000)
+	// Si mmeID n'est pas encore connu, utiliser seulement l'eNB ID
+	if enbID != -1 {
+		return fmt.Sprintf("enb_%d_temp", enbID)
+	}
+	// Cas d'urgence - ne devrait normalement pas arriver
+	return fmt.Sprintf("unknown_%d", time.Now().UnixNano()%10000)
 }
 
 // isSessionEndingProcedure détermine si une procédure termine une session UE
 func (a *Analyzer) isSessionEndingProcedure(procedureName string) bool {
-	endingProcedures := []string{
-		"UEContextReleaseComplete",
-		"UEContextReleaseCommand", 
-		"Reset",
-		"ErrorIndication", // Dans certains cas
+	// La session se termine définitivement avec UEContextReleaseComplete
+	return procedureName == "UEContextReleaseComplete"
+}
+
+// handleCompletedSession gère la finalisation d'une session UE :
+// 1. Récupère la session complète de MongoDB
+// 2. La sauvegarde dans le fichier sessions.json
+// 3. La supprime de MongoDB
+func (a *Analyzer) handleCompletedSession(mmeID, enbID int64) error {
+	if a.mongoCollection == nil {
+		return nil // Ne rien faire si MongoDB n'est pas configuré
 	}
-	
-	for _, proc := range endingProcedures {
-		if proc == procedureName {
-			return true
+
+	// Créer le filtre pour trouver la session
+	filter := bson.M{"enb_ue_s1ap_id": enbID}
+	if mmeID != -1 {
+		filter["mme_ue_s1ap_id"] = mmeID
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// 1. Récupérer la session complète de MongoDB
+	var session UeSessionDocument
+	err := a.mongoCollection.FindOne(ctx, filter).Decode(&session)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			log.Printf("WARN: Session not found for completion (eNB: %d, MME: %d)", enbID, mmeID)
+			return nil
+		}
+		return fmt.Errorf("failed to retrieve session for completion: %w", err)
+	}
+
+	// Marquer la session comme terminée
+	session.Status = "completed"
+	session.LastUpdate = time.Now()
+
+	// 2. Sauvegarder la session dans le fichier JSON
+	if err := a.appendSessionToFile(&session); err != nil {
+		log.Printf("ERROR: Failed to save completed session to file: %v", err)
+		// Ne pas arrêter le processus, mais continuer avec la suppression MongoDB
+	} else {
+		log.Printf("INFO: Session completed and saved to file - SessionID: %s (eNB: %d, MME: %d, Messages: %d)", 
+			session.SessionID, session.EnbUeS1apID, session.MmeUeS1apID, session.MessageCount)
+		// Incrémenter le compteur de sessions terminées
+		a.stats.CompletedSessions++
+	}
+
+	// 3. Supprimer la session de MongoDB
+	deleteResult, err := a.mongoCollection.DeleteOne(ctx, filter)
+	if err != nil {
+		return fmt.Errorf("failed to delete completed session from MongoDB: %w", err)
+	}
+
+	if deleteResult.DeletedCount > 0 {
+		log.Printf("INFO: Completed session removed from MongoDB - SessionID: %s", session.SessionID)
+	} else {
+		log.Printf("WARN: No session was deleted from MongoDB for SessionID: %s", session.SessionID)
+	}
+
+	return nil
+}
+
+// appendSessionToFile ajoute une session terminée au fichier JSON
+func (a *Analyzer) appendSessionToFile(session *UeSessionDocument) error {
+	a.sessionsFileMutex.Lock()
+	defer a.sessionsFileMutex.Unlock()
+
+	var sessions []*UeSessionDocument
+
+	// Lire le fichier existant s'il existe
+	if data, err := os.ReadFile(a.config.SessionsFile); err == nil {
+		if err := json.Unmarshal(data, &sessions); err != nil {
+			log.Printf("WARN: Failed to parse existing sessions file, creating new one: %v", err)
+			sessions = []*UeSessionDocument{}
 		}
 	}
-	return false
+
+	// Ajouter la nouvelle session
+	sessions = append(sessions, session)
+
+	// Réécrire le fichier avec la nouvelle session
+	data, err := json.MarshalIndent(sessions, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal sessions to JSON: %w", err)
+	}
+
+	if err := os.WriteFile(a.config.SessionsFile, data, 0644); err != nil {
+		return fmt.Errorf("failed to write sessions file: %w", err)
+	}
+
+	return nil
+}
+
+// handleCompletedSessionByEnbID gère la finalisation d'une session UE en utilisant seulement l'eNB ID
+func (a *Analyzer) handleCompletedSessionByEnbID(enbID int64) error {
+	if a.mongoCollection == nil {
+		return nil
+	}
+
+	// Chercher la session par eNB_UE_S1AP_ID seulement
+	filter := bson.M{"enb_ue_s1ap_id": enbID}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Récupérer la session complète de MongoDB
+	var session UeSessionDocument
+	err := a.mongoCollection.FindOne(ctx, filter).Decode(&session)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			log.Printf("WARN: Session not found for completion by eNB ID (eNB: %d)", enbID)
+			return nil
+		}
+		return fmt.Errorf("failed to retrieve session for completion: %w", err)
+	}
+
+	// Marquer la session comme terminée
+	session.Status = "completed"
+	session.LastUpdate = time.Now()
+
+	// Sauvegarder la session dans le fichier JSON
+	if err := a.appendSessionToFile(&session); err != nil {
+		log.Printf("ERROR: Failed to save completed session to file: %v", err)
+	} else {
+		log.Printf("INFO: Session completed and saved to file - SessionID: %s (eNB: %d, MME: %d, Messages: %d)", 
+			session.SessionID, session.EnbUeS1apID, session.MmeUeS1apID, session.MessageCount)
+		a.stats.CompletedSessions++
+	}
+
+	// Supprimer la session de MongoDB
+	deleteResult, err := a.mongoCollection.DeleteOne(ctx, filter)
+	if err != nil {
+		return fmt.Errorf("failed to delete completed session from MongoDB: %w", err)
+	}
+
+	if deleteResult.DeletedCount > 0 {
+		log.Printf("INFO: Completed session removed from MongoDB - SessionID: %s", session.SessionID)
+	} else {
+		log.Printf("WARN: No session was deleted from MongoDB for SessionID: %s", session.SessionID)
+	}
+
+	return nil
 }
 
 
@@ -589,7 +944,13 @@ func (a *Analyzer) parseS1APMessage(packet gopacket.Packet, payload []byte, msgI
 
 	// Extract real procedure code from payload
 	realProcCode := s1ap.ExtractProcedureCode(payload)
-	procedureName := s1ap.GetProcedureName(realProcCode)
+	
+	// Get specific message name based on message type and procedure code
+	procedureName := s1ap.GetMessageName(msgType, realProcCode)
+
+	if a.config.Debug {
+		log.Printf("DEBUG: parseS1APMessage - procedureName: %s, msgType: %d, realProcCode: %d", procedureName, msgType, realProcCode)
+	}
 
 	// Get IP information
 	srcIP, dstIP := a.extractIPInfo(packet)
@@ -598,7 +959,43 @@ func (a *Analyzer) parseS1APMessage(packet gopacket.Packet, payload []byte, msgI
 	pduType, pduTypeCode := a.analyzePDUType(payload)
 
 	// Extract IEs from the decoded PDU
-	ies := s1ap.ExtractAllIEs(decodedPDU, msgType)
+	if a.config.Debug {
+		log.Printf("DEBUG: About to call ExtractAllIEs for procedureName: %s", procedureName)
+	}
+	ies := s1ap.ExtractAllIEs(decodedPDU, msgType, realProcCode)
+	
+	// Special handling for UEContextReleaseComplete - try to extract IEs using C handler
+	if procedureName == "UEContextReleaseComplete" && (len(ies) == 0 || !hasValidUEIdentifiers(ies)) {
+		if a.config.Debug {
+			log.Printf("DEBUG: Using C handler for UEContextReleaseComplete IE extraction")
+		}
+		
+		// Try to extract using the C handler
+		if mmeID, enbID, err := s1ap.UEContextReleaseCompleteHandle(decodedPDU); err == nil {
+			// Create IEs manually from the extracted values
+			if mmeID != -1 {
+				ies = append(ies, &s1ap.InformationElement{
+					ID:          0,
+					Name:        "id_MME_UE_S1AP_ID",
+					Criticality: "reject",
+					Value:       mmeID,
+					RawValue:    fmt.Sprintf("%d", mmeID),
+				})
+			}
+			if enbID != -1 {
+				ies = append(ies, &s1ap.InformationElement{
+					ID:          8,
+					Name:        "id_eNB_UE_S1AP_ID",
+					Criticality: "reject",
+					Value:       enbID,
+					RawValue:    fmt.Sprintf("%d", enbID),
+				})
+			}
+			if a.config.Debug {
+				log.Printf("DEBUG: Extracted from C handler - MME: %d, eNB: %d", mmeID, enbID)
+			}
+		}
+	}
 
 	message := &S1APMessage{
 		PacketNumber:  a.stats.TotalFrames,
@@ -619,6 +1016,23 @@ func (a *Analyzer) parseS1APMessage(packet gopacket.Packet, payload []byte, msgI
 	}
 
 	return message
+}
+
+// Helper function to check if IEs contain valid UE identifiers
+func hasValidUEIdentifiers(ies []*s1ap.InformationElement) bool {
+	hasMME := false
+	hasENB := false
+	
+	for _, ie := range ies {
+		if ie.ID == 0 && ie.Value != nil && ie.Value != "Not decoded" && ie.Value != "Extraction failed" {
+			hasMME = true
+		}
+		if ie.ID == 8 && ie.Value != nil && ie.Value != "Not decoded" && ie.Value != "Extraction failed" {
+			hasENB = true
+		}
+	}
+	
+	return hasMME && hasENB
 }
 
 func (a *Analyzer) extractIPInfo(packet gopacket.Packet) (string, string) {
@@ -729,6 +1143,13 @@ func (a *Analyzer) outputStats() error {
 	if a.stats.SuccessfulDecodes > 0 {
 		successRate := float64(a.stats.SuccessfulDecodes) / float64(a.stats.S1APFrames) * 100
 		fmt.Printf("Success rate: %.1f%%\n", successRate)
+	}
+	
+	if a.config.MongoStore {
+		fmt.Printf("Completed sessions: %d\n", a.stats.CompletedSessions)
+		if a.stats.CompletedSessions > 0 {
+			fmt.Printf("Sessions file: %s\n", a.config.SessionsFile)
+		}
 	}
 	
 	fmt.Printf("Processing time: %v\n\n", a.stats.ProcessingTime)

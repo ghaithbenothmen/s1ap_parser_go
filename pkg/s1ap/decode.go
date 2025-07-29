@@ -11,6 +11,7 @@ package s1ap
 // #include <stdlib.h>
 import "C"
 import (
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -200,6 +201,36 @@ func UEContextReleaseRequestHandle(packet unsafe.Pointer) (int32, string, error)
 		}
 	}
 	return enb_ie_s1ap_id, cause, nil
+}
+
+// Handler for UEContextReleaseComplete
+func UEContextReleaseCompleteHandle(packet unsafe.Pointer) (int32, int32, error) {
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.SuccessfulOutcome_t)(unsafe.Pointer(&pdu.choice))
+	val := (*C.UEContextReleaseComplete_t)(unsafe.Pointer(&msg.value.choice))
+
+	var ies []*C.UEContextReleaseComplete_IEs_t
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
+	slice.Cap = (int)(val.protocolIEs.list.count)
+	slice.Len = (int)(val.protocolIEs.list.count)
+	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+
+	var mme_ue_s1ap_id int32 = -1
+	var enb_ue_s1ap_id int32 = -1
+
+	for _, ie := range ies {
+		switch ie.id {
+		case C.ProtocolIE_ID_id_MME_UE_S1AP_ID:
+			mme_id_c := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+			mme_ue_s1ap_id = (int32)(*mme_id_c)
+		case C.ProtocolIE_ID_id_eNB_UE_S1AP_ID:
+			enb_id_c := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+			enb_ue_s1ap_id = (int32)(*enb_id_c)
+		default:
+		}
+	}
+
+	return mme_ue_s1ap_id, enb_ue_s1ap_id, nil
 }
 
 // Handler for E-RABSetupRequest
@@ -724,14 +755,22 @@ func GetIEName(id int) string {
 }
 
 // ExtractAllIEs extracts all Information Elements from a decoded S1AP PDU
-func ExtractAllIEs(packet unsafe.Pointer, messageType int) []*InformationElement {
+func ExtractAllIEs(packet unsafe.Pointer, messageType int, realProcCode ...int) []*InformationElement {
 	var ies []*InformationElement
 
 	pdu := (*C.S1AP_PDU_t)(packet)
+	log.Printf("DEBUG: ExtractAllIEs called - pdu.present: %d, messageType: %d", pdu.present, messageType)
+
+	// Determine the procedure code to use
+	procCode := messageType
+	if len(realProcCode) > 0 {
+		procCode = realProcCode[0]
+	}
 
 	switch pdu.present {
 	case C.S1AP_PDU_PR_initiatingMessage:
-		ies = extractInitiatingMessageIEs(packet, messageType)
+		log.Printf("DEBUG: Calling extractInitiatingMessageIEs for messageType: %d, procCode: %d", messageType, procCode)
+		ies = extractInitiatingMessageIEs(packet, messageType, procCode)
 	case C.S1AP_PDU_PR_successfulOutcome:
 		ies = extractSuccessfulOutcomeIEs(packet, messageType)
 	case C.S1AP_PDU_PR_unsuccessfulOutcome:
@@ -743,7 +782,7 @@ func ExtractAllIEs(packet unsafe.Pointer, messageType int) []*InformationElement
 	return ies
 }
 
-func extractInitiatingMessageIEs(packet unsafe.Pointer, messageType int) []*InformationElement {
+func extractInitiatingMessageIEs(packet unsafe.Pointer, messageType int, procCode int) []*InformationElement {
 	var ies []*InformationElement
 
 	pdu := (*C.S1AP_PDU_t)(packet)
@@ -754,16 +793,30 @@ func extractInitiatingMessageIEs(packet unsafe.Pointer, messageType int) []*Info
 	msg := *(**C.InitiatingMessage_t)(unsafe.Pointer(&pdu.choice))
 
 	// Switch based on message type to extract IEs appropriately
+	log.Printf("DEBUG: extractInitiatingMessageIEs - msg.value.present: %d, messageType: %d, procCode: %d", msg.value.present, messageType, procCode)
+	
+	// First check procedure code for specific routing (override ASN.1 present values)
+	if procCode == 12 { // InitialUEMessage procedure code
+		log.Printf("DEBUG: Detected InitialUEMessage via procedure code 12 - calling extractInitialUEMessageIEs")
+		ies = extractInitialUEMessageIEs(packet)
+		return ies
+	}
+	
 	switch msg.value.present {
 	case C.InitiatingMessage__value_PR_InitialUEMessage:
+		log.Printf("DEBUG: Detected InitialUEMessage - calling extractInitialUEMessageIEs")
 		ies = extractInitialUEMessageIEs(packet)
 	case C.InitiatingMessage__value_PR_UplinkNASTransport:
+		log.Printf("DEBUG: Detected UplinkNASTransport - calling extractUplinkNASTransportIEs")
 		ies = extractUplinkNASTransportIEs(packet)
 	case C.InitiatingMessage__value_PR_Paging:
 		// Handle both Paging and DownlinkNASTransport (which seem to have the same internal type)
-		if messageType == 6 { // DownlinkNASTransport procedure code
+		log.Printf("DEBUG: Paging case - procCode: %d (11=DownlinkNASTransport, 10=Paging)", procCode)
+		if procCode == 11 { // DownlinkNASTransport procedure code
+			log.Printf("DEBUG: Detected DownlinkNASTransport via Paging case - calling extractDownlinkNASTransportIEs")
 			ies = extractDownlinkNASTransportIEs(packet)
 		} else {
+			log.Printf("DEBUG: Detected Paging message - calling extractPagingIEs")
 			ies = extractPagingIEs(packet)
 		}
 	case C.InitiatingMessage__value_PR_CellTrafficTrace:
@@ -779,6 +832,7 @@ func extractInitiatingMessageIEs(packet unsafe.Pointer, messageType int) []*Info
 	case C.InitiatingMessage__value_PR_S1SetupRequest:
 		ies = extractS1SetupRequestIEs(packet)
 	case C.InitiatingMessage__value_PR_DownlinkNASTransport:
+		log.Printf("DEBUG: Detected DownlinkNASTransport via dedicated case - calling extractDownlinkNASTransportIEs")
 		ies = extractDownlinkNASTransportIEs(packet)
 	case C.InitiatingMessage__value_PR_HandoverRequired:
 		ies = extractHandoverRequiredIEs(packet)
@@ -786,6 +840,7 @@ func extractInitiatingMessageIEs(packet unsafe.Pointer, messageType int) []*Info
 		ies = extractUECapabilityInfoIndicationIEs(packet)
 	default:
 		// For unsupported message types, try generic extraction
+		log.Printf("DEBUG: extractInitiatingMessageIEs default case - msg.value.present: %d, messageType: %d, procCode: %d", msg.value.present, messageType, procCode)
 		ies = extractGenericIEs(packet, messageType)
 	}
 
@@ -801,20 +856,26 @@ func extractSuccessfulOutcomeIEs(packet unsafe.Pointer, messageType int) []*Info
 	}
 
 	msg := *(**C.SuccessfulOutcome_t)(unsafe.Pointer(&pdu.choice))
+	
+	log.Printf("DEBUG: SuccessfulOutcome - procedure code: %d, messageType: %d", msg.procedureCode, messageType)
 
-	// Switch based on message type to extract IEs appropriately
-	switch msg.value.present {
-	case C.SuccessfulOutcome__value_PR_E_RABSetupResponse:
+	// Use procedure code to determine message type since the ASN.1 constants may not be available
+	switch msg.procedureCode {
+	case 23: // UEContextRelease
+		log.Printf("DEBUG: Calling extractUEContextReleaseCompleteIEs for procedure code 23")
+		ies = extractUEContextReleaseCompleteIEs(packet)
+	case 5: // E-RABSetup
 		ies = extractERABSetupResponseIEs(packet)
-	case C.SuccessfulOutcome__value_PR_S1SetupResponse:
+	case 17: // S1Setup
 		ies = extractS1SetupResponseIEs(packet)
-	case C.SuccessfulOutcome__value_PR_InitialContextSetupResponse:
+	case 9: // InitialContextSetup
 		ies = extractInitialContextSetupResponseIEs(packet)
-	case C.SuccessfulOutcome__value_PR_UEContextModificationResponse:
+	case 25: // UEContextModification
 		ies = extractUEContextModificationResponseIEs(packet)
-	case C.SuccessfulOutcome__value_PR_HandoverCommand:
+	case 0: // HandoverPreparation
 		ies = extractHandoverCommandIEs(packet)
 	default:
+		log.Printf("DEBUG: SuccessfulOutcome default case - procedure code: %d", msg.procedureCode)
 		// For unsupported successful outcome types, try generic extraction
 		ies = extractGenericIEs(packet, messageType)
 	}
@@ -856,66 +917,188 @@ func extractInitialUEMessageIEs(packet unsafe.Pointer) []*InformationElement {
 	msg := *(**C.InitiatingMessage_t)(unsafe.Pointer(&pdu.choice))
 	val := (*C.InitialUEMessage_t)(unsafe.Pointer(&msg.value.choice))
 
+	log.Printf("DEBUG: InitialUEMessage extracting IEs, protocolIEs.list.count: %d", val.protocolIEs.list.count)
+
 	var ies []*C.InitialUEMessage_IEs_t
 	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
 	slice.Cap = (int)(val.protocolIEs.list.count)
 	slice.Len = (int)(val.protocolIEs.list.count)
 	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
 
-	for _, ie := range ies {
+	log.Printf("DEBUG: InitialUEMessage got %d IEs in slice", len(ies))
+
+	for i, ie := range ies {
+		if ie == nil {
+			log.Printf("DEBUG: InitialUEMessage IE[%d] is nil, skipping", i)
+			continue
+		}
+
 		ieStruct := &InformationElement{
 			ID:          int(ie.id),
 			Name:        GetIEName(int(ie.id)),
 			Criticality: getCriticalityString(int(ie.criticality)),
 		}
 
-		switch ie.id {
-		case C.ProtocolIE_ID_id_eNB_UE_S1AP_ID:
-			log.Printf("DEBUG: Found id_eNB_UE_S1AP_ID (ID=%d)", ie.id)
-			enb_id := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+		log.Printf("DEBUG: InitialUEMessage IE[%d] - ID: %d, Name: %s, Present: %d", i, ie.id, ieStruct.Name, ie.value.present)
+
+		// Use the value present enum instead of the ID, with correct pointer casting
+		switch ie.value.present {
+		case C.InitialUEMessage_IEs__value_PR_ENB_UE_S1AP_ID:
+			enb_id := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice[0]))
 			ieStruct.Value = int32(*enb_id)
-		case C.ProtocolIE_ID_id_NAS_PDU:
-			log.Printf("DEBUG: Found id_NAS_PDU (ID=%d)", ie.id)
-			nas_pdu := (*C.NAS_PDU_t)(unsafe.Pointer(&ie.value.choice))
+			ieStruct.RawValue = fmt.Sprintf("%d", int32(*enb_id))
+			log.Printf("DEBUG: InitialUEMessage extracted eNB_UE_S1AP_ID: %d", int32(*enb_id))
+		case C.InitialUEMessage_IEs__value_PR_NAS_PDU:
+			nas_pdu := (*C.NAS_PDU_t)(unsafe.Pointer(&ie.value.choice[0]))
+			hexData := extractOctetString(nas_pdu)
 			ieStruct.Value = fmt.Sprintf("NAS_PDU(%d bytes)", nas_pdu.size)
-			ieStruct.RawValue = extractOctetString(nas_pdu)
-			// TEST : on simule un TAI pour prouver que nos fonctions marchent
-			log.Printf("DEBUG: Testing TAI extraction function...")
-			testValue, testRaw := "TAI_TEST", "TAI_RAW_TEST"
-			log.Printf("DEBUG: TAI test returned: value='%s', raw='%s'", testValue, testRaw)
-		case C.ProtocolIE_ID_id_TAI:
-			log.Printf("DEBUG: Found id_TAI (ID=%d) - calling extractTAI", ie.id)
-			tai_ptr := unsafe.Pointer(&ie.value.choice)
-			value, rawValue := extractTAI(tai_ptr)
-			ieStruct.Value = value
-			ieStruct.RawValue = rawValue
-		case C.ProtocolIE_ID_id_EUTRAN_CGI:
-			log.Printf("DEBUG: Found id_EUTRAN_CGI (ID=%d) - calling extractEUTRANCGI", ie.id)
-			cgi_ptr := unsafe.Pointer(&ie.value.choice)
-			value, rawValue := extractEUTRANCGI(cgi_ptr)
-			ieStruct.Value = value
-			ieStruct.RawValue = rawValue
-		case C.ProtocolIE_ID_id_S_TMSI:
-			log.Printf("DEBUG: Found id_S_TMSI (ID=%d) - calling extractSTMSI", ie.id)
-			stmsi_ptr := unsafe.Pointer(&ie.value.choice)
-			value, rawValue := extractSTMSI(stmsi_ptr)
-			ieStruct.Value = value
-			ieStruct.RawValue = rawValue
-		case C.ProtocolIE_ID_id_RRC_Establishment_Cause:
-			log.Printf("DEBUG: Found id_RRC_Establishment_Cause (ID=%d) - calling extractRRCEstablishmentCause", ie.id)
-			cause_ptr := unsafe.Pointer(&ie.value.choice)
-			value, rawValue := extractRRCEstablishmentCause(cause_ptr)
-			ieStruct.Value = value
-			ieStruct.RawValue = rawValue
+			ieStruct.RawValue = hexData
+			log.Printf("DEBUG: InitialUEMessage extracted NAS_PDU: %d bytes", nas_pdu.size)
+		case C.InitialUEMessage_IEs__value_PR_TAI:
+			tai := (*C.TAI_t)(unsafe.Pointer(&ie.value.choice[0]))
+			hexData := extractOctetString(&tai.pLMNidentity)
+			// TAC est un OCTET STRING de 2 bytes
+			if tai.tAC.size >= 2 {
+				tacBytes := C.GoBytes(unsafe.Pointer(tai.tAC.buf), C.int(tai.tAC.size))
+				tac := fmt.Sprintf("%04x", binary.BigEndian.Uint16(tacBytes))
+				ieStruct.Value = fmt.Sprintf("TAI(PLMN:%s, TAC:%s)", hexData[:6], tac)
+			} else {
+				ieStruct.Value = fmt.Sprintf("TAI(PLMN:%s, TAC:invalid)", hexData[:6])
+			}
+			ieStruct.RawValue = hexData
+			log.Printf("DEBUG: InitialUEMessage extracted TAI: %s", ieStruct.Value)
+		case C.InitialUEMessage_IEs__value_PR_EUTRAN_CGI:
+			eutran_cgi := (*C.EUTRAN_CGI_t)(unsafe.Pointer(&ie.value.choice[0]))
+			plmnHex := extractOctetString(&eutran_cgi.pLMNidentity)
+			// Cell ID est un BIT STRING, pas un OCTET STRING
+			cellIdBytes := C.GoBytes(unsafe.Pointer(eutran_cgi.cell_ID.buf), C.int(eutran_cgi.cell_ID.size))
+			cellIdHex := fmt.Sprintf("%x", cellIdBytes)
+			ieStruct.Value = fmt.Sprintf("EUTRAN_CGI(PLMN:%s, CellID:%s)", plmnHex[:6], cellIdHex[:8])
+			ieStruct.RawValue = plmnHex + cellIdHex
+			log.Printf("DEBUG: InitialUEMessage extracted EUTRAN_CGI: %s", ieStruct.Value)
+		case C.InitialUEMessage_IEs__value_PR_RRC_Establishment_Cause:
+			rrc_cause := (*C.RRC_Establishment_Cause_t)(unsafe.Pointer(&ie.value.choice[0]))
+			causeValue := int32(*rrc_cause)
+			causeName := getRRCEstablishmentCauseName(causeValue)
+			ieStruct.Value = fmt.Sprintf("RRC_Cause(%s)", causeName)
+			ieStruct.RawValue = fmt.Sprintf("%d", causeValue)
+			log.Printf("DEBUG: InitialUEMessage extracted RRC_Establishment_Cause: %s", ieStruct.Value)
+		case C.InitialUEMessage_IEs__value_PR_S_TMSI:
+			s_tmsi := (*C.S_TMSI_t)(unsafe.Pointer(&ie.value.choice[0]))
+			mmecHex := extractOctetString(&s_tmsi.mMEC)
+			mtmsiHex := extractOctetString(&s_tmsi.m_TMSI)
+			ieStruct.Value = fmt.Sprintf("S_TMSI(MMEC:%s, M-TMSI:%s)", mmecHex[:2], mtmsiHex[:8])
+			ieStruct.RawValue = mmecHex + mtmsiHex
+			log.Printf("DEBUG: InitialUEMessage extracted S_TMSI: %s", ieStruct.Value)
+		case C.InitialUEMessage_IEs__value_PR_GUMMEIType:
+			gummei_type := (*C.GUMMEIType_t)(unsafe.Pointer(&ie.value.choice[0]))
+			typeValue := int32(*gummei_type)
+			var typeName string
+			switch typeValue {
+			case 0:
+				typeName = "native"
+			case 1:
+				typeName = "mapped"
+			default:
+				typeName = "unknown"
+			}
+			ieStruct.Value = fmt.Sprintf("GUMMEIType(%s)", typeName)
+			ieStruct.RawValue = fmt.Sprintf("%d", typeValue)
+			log.Printf("DEBUG: InitialUEMessage extracted GUMMEIType: %s", ieStruct.Value)
+		case C.InitialUEMessage_IEs__value_PR_CSG_Id:
+			csg_id := (*C.CSG_Id_t)(unsafe.Pointer(&ie.value.choice[0]))
+			csgBytes := C.GoBytes(unsafe.Pointer(csg_id.buf), C.int(csg_id.size))
+			csgHex := fmt.Sprintf("%x", csgBytes)
+			ieStruct.Value = fmt.Sprintf("CSG_Id(%s)", csgHex[:8])
+			ieStruct.RawValue = csgHex
+			log.Printf("DEBUG: InitialUEMessage extracted CSG_Id: %s", ieStruct.Value)
+		case C.InitialUEMessage_IEs__value_PR_GUMMEI:
+			gummei := (*C.GUMMEI_t)(unsafe.Pointer(&ie.value.choice[0]))
+			plmnHex := extractOctetString(&gummei.pLMN_Identity)
+			mmegi := extractOctetString(&gummei.mME_Group_ID)
+			mmec := extractOctetString(&gummei.mME_Code)
+			ieStruct.Value = fmt.Sprintf("GUMMEI(PLMN:%s, MMEGI:%s, MMEC:%s)", plmnHex[:6], mmegi[:4], mmec[:2])
+			ieStruct.RawValue = plmnHex + mmegi + mmec
+			log.Printf("DEBUG: InitialUEMessage extracted GUMMEI: %s", ieStruct.Value)
+		case C.InitialUEMessage_IEs__value_PR_CellAccessMode:
+			access_mode := (*C.CellAccessMode_t)(unsafe.Pointer(&ie.value.choice[0]))
+			modeValue := int32(*access_mode)
+			var modeName string
+			switch modeValue {
+			case 0:
+				modeName = "hybrid"
+			case 1:
+				modeName = "closed"
+			default:
+				modeName = "unknown"
+			}
+			ieStruct.Value = fmt.Sprintf("CellAccessMode(%s)", modeName)
+			ieStruct.RawValue = fmt.Sprintf("%d", modeValue)
+			log.Printf("DEBUG: InitialUEMessage extracted CellAccessMode: %s", ieStruct.Value)
+		case C.InitialUEMessage_IEs__value_PR_TransportLayerAddress:
+			tla := (*C.TransportLayerAddress_t)(unsafe.Pointer(&ie.value.choice[0]))
+			tlaBytes := C.GoBytes(unsafe.Pointer(tla.buf), C.int(tla.size))
+			if len(tlaBytes) >= 4 {
+				ip := net.IPv4(tlaBytes[0], tlaBytes[1], tlaBytes[2], tlaBytes[3])
+				ieStruct.Value = fmt.Sprintf("TransportLayerAddress(%s)", ip.String())
+			} else {
+				ieStruct.Value = fmt.Sprintf("TransportLayerAddress(%x)", tlaBytes)
+			}
+			ieStruct.RawValue = fmt.Sprintf("%x", tlaBytes)
+			log.Printf("DEBUG: InitialUEMessage extracted TransportLayerAddress: %s", ieStruct.Value)
+		case C.InitialUEMessage_IEs__value_PR_RelayNode_Indicator:
+			relay_indicator := (*C.RelayNode_Indicator_t)(unsafe.Pointer(&ie.value.choice[0]))
+			indicatorValue := int32(*relay_indicator)
+			var indicatorName string
+			switch indicatorValue {
+			case 0:
+				indicatorName = "true"
+			default:
+				indicatorName = "false"
+			}
+			ieStruct.Value = fmt.Sprintf("RelayNode_Indicator(%s)", indicatorName)
+			ieStruct.RawValue = fmt.Sprintf("%d", indicatorValue)
+			log.Printf("DEBUG: InitialUEMessage extracted RelayNode_Indicator: %s", ieStruct.Value)
 		default:
-			log.Printf("DEBUG: Unknown IE ID=%d, name=%s", ie.id, GetIEName(int(ie.id)))
+			// Gestion générique pour les IEs non supportés spécifiquement
 			ieStruct.Value = "Unknown"
-			ieStruct.RawValue = fmt.Sprintf("IE_%d present", ie.id)
+			ieStruct.RawValue = fmt.Sprintf("IE_%d present (PR=%d)", ie.id, ie.value.present)
+			log.Printf("DEBUG: InitialUEMessage unknown IE ID: %d, present: %d, name: %s", ie.id, ie.value.present, ieStruct.Name)
+			
+			// Essayer d'extraire des données brutes si possible
+			if ie.value.present > 0 {
+				// Tentative d'extraction de données brutes générique
+				switch ie.id {
+				case C.ProtocolIE_ID_id_LHN_ID, C.ProtocolIE_ID_id_MME_Group_ID, C.ProtocolIE_ID_id_UE_Usage_Type:
+					// Pour ces IEs, essayer d'extraire comme OCTET STRING
+					if ie.value.present < 20 { // Protection contre les valeurs aberrantes
+						octetPtr := (*C.OCTET_STRING_t)(unsafe.Pointer(&ie.value.choice[0]))
+						if octetPtr != nil && octetPtr.size > 0 && octetPtr.size < 256 {
+							rawData := extractOctetString(octetPtr)
+							ieStruct.RawValue = rawData
+							ieStruct.Value = fmt.Sprintf("Data(%d bytes)", octetPtr.size)
+							log.Printf("DEBUG: InitialUEMessage extracted generic OCTET_STRING for IE %d: %d bytes", ie.id, octetPtr.size)
+						}
+					}
+				default:
+					// Pour d'autres IEs, essayer d'extraire comme INTEGER
+					if ie.value.present < 20 { // Protection contre les valeurs aberrantes
+						intPtr := (*C.long)(unsafe.Pointer(&ie.value.choice[0]))
+						if intPtr != nil {
+							ieStruct.RawValue = fmt.Sprintf("%d", *intPtr)
+							ieStruct.Value = fmt.Sprintf("Value(%d)", *intPtr)
+							log.Printf("DEBUG: InitialUEMessage extracted generic INTEGER for IE %d: %d", ie.id, *intPtr)
+						}
+					}
+				}
+			}
 		}
 
 		result = append(result, ieStruct)
 	}
 
+	log.Printf("DEBUG: InitialUEMessage extraction completed with %d IEs", len(result))
+	
 	return result
 }
 
@@ -927,47 +1110,74 @@ func extractUplinkNASTransportIEs(packet unsafe.Pointer) []*InformationElement {
 	msg := *(**C.InitiatingMessage_t)(unsafe.Pointer(&pdu.choice))
 	val := (*C.UplinkNASTransport_t)(unsafe.Pointer(&msg.value.choice))
 
+	log.Printf("DEBUG: UplinkNASTransport extracting IEs, protocolIEs.list.count: %d", val.protocolIEs.list.count)
+
 	var ies []*C.UplinkNASTransport_IEs_t
 	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
 	slice.Cap = (int)(val.protocolIEs.list.count)
 	slice.Len = (int)(val.protocolIEs.list.count)
 	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
 
-	for _, ie := range ies {
+	log.Printf("DEBUG: UplinkNASTransport got %d IEs in slice", len(ies))
+
+	for i, ie := range ies {
+		if ie == nil {
+			log.Printf("DEBUG: UplinkNASTransport IE[%d] is nil, skipping", i)
+			continue
+		}
+
 		ieStruct := &InformationElement{
 			ID:          int(ie.id),
 			Name:        GetIEName(int(ie.id)),
 			Criticality: getCriticalityString(int(ie.criticality)),
 		}
 
-		switch ie.id {
-		case C.ProtocolIE_ID_id_MME_UE_S1AP_ID:
-			mme_id := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+		log.Printf("DEBUG: UplinkNASTransport IE[%d] - ID: %d, Name: %s, Present: %d", i, ie.id, ieStruct.Name, ie.value.present)
+
+		// Use the value present enum instead of the ID, with correct pointer casting
+		switch ie.value.present {
+		case C.UplinkNASTransport_IEs__value_PR_MME_UE_S1AP_ID:
+			mme_id := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice[0]))
 			ieStruct.Value = int32(*mme_id)
-		case C.ProtocolIE_ID_id_eNB_UE_S1AP_ID:
-			enb_id := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+			ieStruct.RawValue = fmt.Sprintf("%d", int32(*mme_id))
+			log.Printf("DEBUG: UplinkNASTransport extracted MME_UE_S1AP_ID: %d", int32(*mme_id))
+		case C.UplinkNASTransport_IEs__value_PR_ENB_UE_S1AP_ID:
+			enb_id := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice[0]))
 			ieStruct.Value = int32(*enb_id)
-		case C.ProtocolIE_ID_id_NAS_PDU:
-			nas_pdu := (*C.NAS_PDU_t)(unsafe.Pointer(&ie.value.choice))
+			ieStruct.RawValue = fmt.Sprintf("%d", int32(*enb_id))
+			log.Printf("DEBUG: UplinkNASTransport extracted eNB_UE_S1AP_ID: %d", int32(*enb_id))
+		case C.UplinkNASTransport_IEs__value_PR_NAS_PDU:
+			nas_pdu := (*C.NAS_PDU_t)(unsafe.Pointer(&ie.value.choice[0]))
+			hexData := extractOctetString(nas_pdu)
 			ieStruct.Value = fmt.Sprintf("NAS_PDU(%d bytes)", nas_pdu.size)
-			ieStruct.RawValue = extractOctetString(nas_pdu)
-		case C.ProtocolIE_ID_id_EUTRAN_CGI:
-			cgi_ptr := unsafe.Pointer(&ie.value.choice)
-			value, rawValue := extractEUTRANCGI(cgi_ptr)
-			ieStruct.Value = value
-			ieStruct.RawValue = rawValue
-		case C.ProtocolIE_ID_id_TAI:
-			tai_ptr := unsafe.Pointer(&ie.value.choice)
-			value, rawValue := extractTAI(tai_ptr)
-			ieStruct.Value = value
-			ieStruct.RawValue = rawValue
+			ieStruct.RawValue = hexData
+			log.Printf("DEBUG: UplinkNASTransport extracted NAS_PDU: %d bytes", nas_pdu.size)
+		case C.UplinkNASTransport_IEs__value_PR_EUTRAN_CGI:
+			eutran_cgi := (*C.EUTRAN_CGI_t)(unsafe.Pointer(&ie.value.choice[0]))
+			plmnHex := extractOctetString(&eutran_cgi.pLMNidentity)
+			cellIdBytes := C.GoBytes(unsafe.Pointer(eutran_cgi.cell_ID.buf), C.int(eutran_cgi.cell_ID.size))
+			cellIdHex := fmt.Sprintf("%x", cellIdBytes)
+			ieStruct.Value = fmt.Sprintf("EUTRAN_CGI(PLMN:%s, CellID:%s)", plmnHex[:6], cellIdHex[:8])
+			ieStruct.RawValue = plmnHex + cellIdHex
+			log.Printf("DEBUG: UplinkNASTransport extracted EUTRAN_CGI: %s", ieStruct.Value)
+		case C.UplinkNASTransport_IEs__value_PR_TAI:
+			tai := (*C.TAI_t)(unsafe.Pointer(&ie.value.choice[0]))
+			hexData := extractOctetString(&tai.pLMNidentity)
+			tacBytes := C.GoBytes(unsafe.Pointer(tai.tAC.buf), C.int(tai.tAC.size))
+			tac := fmt.Sprintf("%04x", binary.BigEndian.Uint16(tacBytes))
+			ieStruct.Value = fmt.Sprintf("TAI(PLMN:%s, TAC:%s)", hexData[:6], tac)
+			ieStruct.RawValue = hexData
+			log.Printf("DEBUG: UplinkNASTransport extracted TAI: %s", ieStruct.Value)
 		default:
 			ieStruct.Value = "Unknown"
-			ieStruct.RawValue = fmt.Sprintf("IE_%d present", ie.id)
+			ieStruct.RawValue = fmt.Sprintf("IE_%d present (PR=%d)", ie.id, ie.value.present)
+			log.Printf("DEBUG: UplinkNASTransport unknown IE ID: %d, present: %d", ie.id, ie.value.present)
 		}
 
 		result = append(result, ieStruct)
 	}
+
+	log.Printf("DEBUG: UplinkNASTransport extraction completed with %d IEs", len(result))
 
 	return result
 }
@@ -1202,41 +1412,70 @@ func extractDownlinkNASTransportIEs(packet unsafe.Pointer) []*InformationElement
 	msg := *(**C.InitiatingMessage_t)(unsafe.Pointer(&pdu.choice))
 	val := (*C.DownlinkNASTransport_t)(unsafe.Pointer(&msg.value.choice))
 
+	log.Printf("DEBUG: DownlinkNASTransport extracting IEs, protocolIEs.list.count: %d", val.protocolIEs.list.count)
+
+	// Use the correct structure: DownlinkNASTransport_IEs_t
 	var ies []*C.DownlinkNASTransport_IEs_t
 	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
 	slice.Cap = (int)(val.protocolIEs.list.count)
 	slice.Len = (int)(val.protocolIEs.list.count)
 	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
 
-	for _, ie := range ies {
+	log.Printf("DEBUG: DownlinkNASTransport got %d IEs in slice", len(ies))
+
+	for i, ie := range ies {
+		if ie == nil {
+			log.Printf("DEBUG: DownlinkNASTransport IE[%d] is nil, skipping", i)
+			continue
+		}
+
 		ieStruct := &InformationElement{
 			ID:          int(ie.id),
 			Name:        GetIEName(int(ie.id)),
 			Criticality: getCriticalityString(int(ie.criticality)),
 		}
 
-		switch ie.id {
-		case C.ProtocolIE_ID_id_MME_UE_S1AP_ID:
-			mme_id := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+		log.Printf("DEBUG: DownlinkNASTransport IE[%d] - ID: %d, Name: %s, Present: %d", i, ie.id, ieStruct.Name, ie.value.present)
+
+		// Use the value present enum instead of the ID, with correct pointer casting
+		switch ie.value.present {
+		case C.DownlinkNASTransport_IEs__value_PR_MME_UE_S1AP_ID:
+			// Cast the choice buffer to the appropriate type
+			mme_id := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice[0]))
 			ieStruct.Value = int32(*mme_id)
 			ieStruct.RawValue = fmt.Sprintf("%d", int32(*mme_id))
-		case C.ProtocolIE_ID_id_eNB_UE_S1AP_ID:
-			enb_id := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+			log.Printf("DEBUG: DownlinkNASTransport extracted MME_UE_S1AP_ID: %d", int32(*mme_id))
+		case C.DownlinkNASTransport_IEs__value_PR_ENB_UE_S1AP_ID:
+			// Cast the choice buffer to the appropriate type
+			enb_id := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice[0]))
 			ieStruct.Value = int32(*enb_id)
 			ieStruct.RawValue = fmt.Sprintf("%d", int32(*enb_id))
-		case C.ProtocolIE_ID_id_NAS_PDU:
-			nas_pdu := (*C.NAS_PDU_t)(unsafe.Pointer(&ie.value.choice))
+			log.Printf("DEBUG: DownlinkNASTransport extracted eNB_UE_S1AP_ID: %d", int32(*enb_id))
+		case C.DownlinkNASTransport_IEs__value_PR_NAS_PDU:
+			// Cast the choice buffer to the appropriate type
+			nas_pdu := (*C.NAS_PDU_t)(unsafe.Pointer(&ie.value.choice[0]))
 			hexData := extractOctetString(nas_pdu)
 			ieStruct.Value = fmt.Sprintf("NAS_PDU(%d bytes)", nas_pdu.size)
 			ieStruct.RawValue = hexData
+			log.Printf("DEBUG: DownlinkNASTransport extracted NAS_PDU: %d bytes", nas_pdu.size)
+		case C.DownlinkNASTransport_IEs__value_PR_UERadioCapability:
+			// Cast the choice buffer to the appropriate type
+			ue_radio_cap := (*C.UERadioCapability_t)(unsafe.Pointer(&ie.value.choice[0]))
+			hexData := extractOctetString(ue_radio_cap)
+			ieStruct.Value = fmt.Sprintf("UERadioCapability(%d bytes)", ue_radio_cap.size)
+			ieStruct.RawValue = hexData
+			log.Printf("DEBUG: DownlinkNASTransport extracted UERadioCapability: %d bytes", ue_radio_cap.size)
 		default:
 			ieStruct.Value = "Unknown"
-			ieStruct.RawValue = fmt.Sprintf("IE_%d present", ie.id)
+			ieStruct.RawValue = fmt.Sprintf("IE_%d present (PR=%d)", ie.id, ie.value.present)
+			log.Printf("DEBUG: DownlinkNASTransport unknown IE ID: %d, present: %d", ie.id, ie.value.present)
 		}
 
 		result = append(result, ieStruct)
 	}
 
+	log.Printf("DEBUG: DownlinkNASTransport extraction completed with %d IEs", len(result))
+	
 	return result
 }
 
@@ -1395,10 +1634,132 @@ func extractCellTrafficTraceIEs(packet unsafe.Pointer) []*InformationElement {
 func extractGenericIEs(packet unsafe.Pointer, messageType int) []*InformationElement {
 	var result []*InformationElement
 
-	// For now, return empty slice for unsupported types
-	// This can be extended to handle more message types
+	pdu := (*C.S1AP_PDU_t)(packet)
+	if pdu == nil {
+		return result
+	}
+
+	log.Printf("DEBUG: Generic IE extraction started for messageType: %d", messageType)
+
+	// Try to extract from different PDU types
+	switch pdu.present {
+	case C.S1AP_PDU_PR_initiatingMessage:
+		msg := *(**C.InitiatingMessage_t)(unsafe.Pointer(&pdu.choice))
+		if msg != nil {
+			result = extractGenericInitiatingMessageIEs(packet, msg, messageType)
+		}
+	case C.S1AP_PDU_PR_successfulOutcome:
+		msg := *(**C.SuccessfulOutcome_t)(unsafe.Pointer(&pdu.choice))
+		if msg != nil {
+			result = extractGenericSuccessfulOutcomeIEs(packet, msg, messageType)
+		}
+	case C.S1AP_PDU_PR_unsuccessfulOutcome:
+		msg := *(**C.UnsuccessfulOutcome_t)(unsafe.Pointer(&pdu.choice))
+		if msg != nil {
+			result = extractGenericUnsuccessfulOutcomeIEs(packet, msg, messageType)
+		}
+	default:
+		log.Printf("DEBUG: Unsupported PDU type in generic extraction: %d", pdu.present)
+	}
+
+	log.Printf("DEBUG: Generic extraction found %d IEs", len(result))
+	return result
+}
+
+// Generic extraction for InitiatingMessage
+func extractGenericInitiatingMessageIEs(packet unsafe.Pointer, msg *C.InitiatingMessage_t, messageType int) []*InformationElement {
+	var result []*InformationElement
+
+	// Try to access the protocolIEs list generically
+	// Most S1AP messages have a similar structure with protocolIEs
+	// We'll try to cast to common structures and extract IEs
+
+	switch messageType {
+	case 11: // DownlinkNASTransport
+		return tryExtractDownlinkNASTransportGeneric(packet)
+	case 18: // UEContextReleaseRequest  
+		return tryExtractUEContextReleaseRequestGeneric(packet)
+	case 9: // InitialContextSetupResponse (though this should be SuccessfulOutcome)
+		return tryExtractInitialContextSetupResponseGeneric(packet)
+	default:
+		log.Printf("DEBUG: No specific generic extraction for messageType: %d", messageType)
+	}
 
 	return result
+}
+
+// Generic extraction for SuccessfulOutcome
+func extractGenericSuccessfulOutcomeIEs(packet unsafe.Pointer, msg *C.SuccessfulOutcome_t, messageType int) []*InformationElement {
+	var result []*InformationElement
+
+	switch msg.procedureCode {
+	case 9: // InitialContextSetupResponse
+		return tryExtractInitialContextSetupResponseGeneric(packet)
+	case 21: // UEContextModificationResponse
+		return tryExtractUEContextModificationResponseGeneric(packet)
+	default:
+		log.Printf("DEBUG: No specific generic extraction for SuccessfulOutcome procedure: %d", msg.procedureCode)
+	}
+
+	return result
+}
+
+// Generic extraction for UnsuccessfulOutcome
+func extractGenericUnsuccessfulOutcomeIEs(packet unsafe.Pointer, msg *C.UnsuccessfulOutcome_t, messageType int) []*InformationElement {
+	var result []*InformationElement
+	log.Printf("DEBUG: Generic UnsuccessfulOutcome extraction not implemented yet")
+	return result
+}
+
+// Helper functions for specific message types using fallback extraction
+func tryExtractDownlinkNASTransportGeneric(packet unsafe.Pointer) []*InformationElement {
+	log.Printf("DEBUG: Trying generic DownlinkNASTransport extraction")
+	
+	// Use fallback extraction with likely payload
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.InitiatingMessage_t)(unsafe.Pointer(&pdu.choice))
+	
+	// Try to get raw payload for fallback
+	if msg != nil {
+		return ExtractFallbackIEs(nil, 11) // DownlinkNASTransport procedure code
+	}
+	
+	return []*InformationElement{}
+}
+
+func tryExtractUEContextReleaseRequestGeneric(packet unsafe.Pointer) []*InformationElement {
+	log.Printf("DEBUG: Trying generic UEContextReleaseRequest extraction")
+	return ExtractFallbackIEs(nil, 18) // UEContextReleaseRequest procedure code
+}
+
+func tryExtractInitialContextSetupResponseGeneric(packet unsafe.Pointer) []*InformationElement {
+	log.Printf("DEBUG: Trying generic InitialContextSetupResponse extraction")
+	return ExtractFallbackIEs(nil, 9) // InitialContextSetupResponse procedure code
+}
+
+func tryExtractUEContextModificationResponseGeneric(packet unsafe.Pointer) []*InformationElement {
+	log.Printf("DEBUG: Trying generic UEContextModificationResponse extraction")
+	return ExtractFallbackIEs(nil, 21) // UEContextModificationResponse procedure code
+}
+
+// Helper function to get RRC Establishment Cause name
+func getRRCEstablishmentCauseName(cause int32) string {
+	switch cause {
+	case 0:
+		return "emergency"
+	case 1:
+		return "highPriorityAccess"
+	case 2:
+		return "mt-Access"
+	case 3:
+		return "mo-Signalling"
+	case 4:
+		return "mo-Data"
+	case 5:
+		return "delayTolerantAccess"
+	default:
+		return "unknown"
+	}
 }
 
 // Helper function to get criticality string
@@ -1629,11 +1990,53 @@ func Decode(buf []byte) (unsafe.Pointer, int, error) {
 			log.Printf("Unknown InitiatingMessage procedure: %d", msg.value.present)
 		}
 	case C.S1AP_PDU_PR_successfulOutcome:
-		// Handle successful outcome messages if needed
-		log.Println("SuccessfulOutcome message detected")
+		// Handle successful outcome messages
+		msg := *(**C.SuccessfulOutcome_t)(unsafe.Pointer(&pdu.choice))
+		log.Printf("SuccessfulOutcome message detected, procedure code: %d", msg.procedureCode)
+		
+		// Map procedure codes to specific successful outcome types
+		switch msg.procedureCode {
+		case 23: // UEContextRelease
+			typ = UE_CONTEXT_RELEASE_COMPLETE
+		case 0: // HandoverPreparation
+			typ = HANDOVER_COMMAND
+		case 1: // HandoverResourceAllocation  
+			typ = HANDOVER_REQUEST_ACKNOWLEDGE
+		case 5: // E-RABSetup
+			typ = E_RAB_SETUP_RESPONSE
+		case 6: // E-RABModify
+			typ = E_RAB_MODIFY_RESPONSE
+		case 9: // InitialContextSetup
+			typ = INITIAL_CONTEXT_SETUP_RESPONSE
+		case 17: // S1Setup
+			typ = S1_SETUP_RESPONSE
+		case 14: // Reset
+			typ = RESET_ACKNOWLEDGE
+		default:
+			log.Printf("Unknown SuccessfulOutcome procedure: %d", msg.procedureCode)
+			typ = -1
+		}
 	case C.S1AP_PDU_PR_unsuccessfulOutcome:
-		// Handle unsuccessful outcome messages if needed
-		log.Println("UnsuccessfulOutcome message detected")
+		// Handle unsuccessful outcome messages
+		msg := *(**C.UnsuccessfulOutcome_t)(unsafe.Pointer(&pdu.choice))
+		log.Printf("UnsuccessfulOutcome message detected, procedure code: %d", msg.procedureCode)
+		
+		// Map procedure codes to specific unsuccessful outcome types
+		switch msg.procedureCode {
+		case 0: // HandoverPreparation
+			typ = HANDOVER_PREPARATION_FAILURE
+		case 1: // HandoverResourceAllocation
+			typ = HANDOVER_FAILURE
+		case 5: // E-RABSetup
+			typ = E_RAB_SETUP_FAILURE
+		case 9: // InitialContextSetup
+			typ = INITIAL_CONTEXT_SETUP_FAILURE
+		case 17: // S1Setup
+			typ = S1_SETUP_FAILURE
+		default:
+			log.Printf("Unknown UnsuccessfulOutcome procedure: %d", msg.procedureCode)
+			typ = -1
+		}
 	default:
 	}
 	return packet, typ, nil
@@ -1790,6 +2193,117 @@ func extractInitialContextSetupResponseIEs(packet unsafe.Pointer) []*Information
 
 func extractHandoverCommandIEs(packet unsafe.Pointer) []*InformationElement {
 	return extractGenericIEs(packet, 12) // HandoverCommand
+}
+
+func extractUEContextReleaseCompleteIEs(packet unsafe.Pointer) []*InformationElement {
+	var ies []*InformationElement
+	
+	log.Printf("DEBUG: extractUEContextReleaseCompleteIEs called")
+
+	pdu := (*C.S1AP_PDU_t)(packet)
+	if pdu.present != C.S1AP_PDU_PR_successfulOutcome {
+		log.Printf("DEBUG: PDU is not successfulOutcome: %d", pdu.present)
+		return ies
+	}
+
+	msg := *(**C.SuccessfulOutcome_t)(unsafe.Pointer(&pdu.choice))
+	
+	// Try multiple approaches to extract IEs
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("DEBUG: extractUEContextReleaseCompleteIEs panicked: %v", r)
+			// Try to use the C handler as fallback
+			if mmeID, enbID, err := UEContextReleaseCompleteHandle(packet); err == nil {
+				log.Printf("DEBUG: Using C handler fallback - MME: %d, eNB: %d", mmeID, enbID)
+				ies = []*InformationElement{}
+				if mmeID != -1 {
+					ies = append(ies, &InformationElement{
+						ID:          0,
+						Name:        "id_MME_UE_S1AP_ID",
+						Criticality: "reject",
+						Value:       mmeID,
+						RawValue:    fmt.Sprintf("%d", mmeID),
+					})
+				}
+				if enbID != -1 {
+					ies = append(ies, &InformationElement{
+						ID:          8,
+						Name:        "id_eNB_UE_S1AP_ID",
+						Criticality: "reject",
+						Value:       enbID,
+						RawValue:    fmt.Sprintf("%d", enbID),
+					})
+				}
+			} else {
+				log.Printf("DEBUG: C handler also failed: %v", err)
+				ies = createFallbackUEContextReleaseCompleteIEs()
+			}
+		}
+	}()
+	
+	// Try to use a more generic extraction based on the structure
+	val := (*C.UEContextReleaseComplete_t)(unsafe.Pointer(&msg.value.choice))
+
+	var iesList []*C.UEContextReleaseComplete_IEs_t
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&iesList)))
+	slice.Cap = (int)(val.protocolIEs.list.count)
+	slice.Len = (int)(val.protocolIEs.list.count)
+	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+
+	log.Printf("DEBUG: Found %d IEs in UEContextReleaseComplete", len(iesList))
+
+	for i, ie := range iesList {
+		ieInfo := &InformationElement{
+			ID:          int(ie.id),
+			Name:        GetIEName(int(ie.id)),
+			Criticality: getCriticalityString(int(ie.criticality)),
+		}
+
+		log.Printf("DEBUG: Processing IE[%d] - ID: %d, Name: %s", i, ie.id, ieInfo.Name)
+
+		switch ie.id {
+		case C.ProtocolIE_ID_id_MME_UE_S1AP_ID:
+			mme_id_c := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+			ieInfo.Value = int32(*mme_id_c)
+			ieInfo.RawValue = fmt.Sprintf("%d", int32(*mme_id_c))
+			log.Printf("DEBUG: Extracted MME_UE_S1AP_ID: %d", int32(*mme_id_c))
+		case C.ProtocolIE_ID_id_eNB_UE_S1AP_ID:
+			enb_id_c := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+			ieInfo.Value = int32(*enb_id_c)
+			ieInfo.RawValue = fmt.Sprintf("%d", int32(*enb_id_c))
+			log.Printf("DEBUG: Extracted eNB_UE_S1AP_ID: %d", int32(*enb_id_c))
+		default:
+			ieInfo.Value = "Not decoded"
+			ieInfo.RawValue = "Binary data not extracted"
+			log.Printf("DEBUG: IE ID %d not specifically handled", ie.id)
+		}
+
+		ies = append(ies, ieInfo)
+	}
+
+	log.Printf("DEBUG: Returning %d IEs from UEContextReleaseComplete", len(ies))
+	return ies
+}
+
+// Fallback function to create basic IEs if the main extraction fails
+func createFallbackUEContextReleaseCompleteIEs() []*InformationElement {
+	log.Printf("DEBUG: Using fallback IE creation for UEContextReleaseComplete")
+	return []*InformationElement{
+		{
+			ID:          0,
+			Name:        "id_MME_UE_S1AP_ID",
+			Criticality: "reject",
+			Value:       "Extraction failed",
+			RawValue:    "Fallback placeholder",
+		},
+		{
+			ID:          8,
+			Name:        "id_eNB_UE_S1AP_ID", 
+			Criticality: "reject",
+			Value:       "Extraction failed",
+			RawValue:    "Fallback placeholder",
+		},
+	}
 }
 
 func extractUEContextModificationFailureIEs(packet unsafe.Pointer) []*InformationElement {

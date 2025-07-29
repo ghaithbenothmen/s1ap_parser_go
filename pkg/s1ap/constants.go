@@ -13,26 +13,38 @@ type InformationElement struct {
 const (
 	S1_SETUP_REQUEST = iota + 1
 	S1_SETUP_RESPONSE
+	S1_SETUP_FAILURE
 	INITIAL_UE_MESSAGE
 	UPLINK_NAS_TRANSPORT
 	DOWNLINK_NAS_TRANSPORT
 	PAGING
 	UE_CONTEXT_RELEASE_REQUEST
 	UE_CONTEXT_RELEASE
+	UE_CONTEXT_RELEASE_COMPLETE
 	UE_CONTEXT_MODIFICATION
 	E_RAB_SETUP
+	E_RAB_SETUP_RESPONSE
+	E_RAB_SETUP_FAILURE
 	E_RAB_MODIFY
+	E_RAB_MODIFY_RESPONSE
 	E_RAB_RELEASE
 	E_RAB_RELEASE_INDICATION
 	E_RAB_MODIFICATION_INDICATION
 	INITIAL_CONTEXT_SETUP
+	INITIAL_CONTEXT_SETUP_RESPONSE
+	INITIAL_CONTEXT_SETUP_FAILURE
 	HANDOVER_PREPARATION
+	HANDOVER_COMMAND
+	HANDOVER_PREPARATION_FAILURE
 	HANDOVER_RESOURCE_ALLOCATION
+	HANDOVER_REQUEST_ACKNOWLEDGE
+	HANDOVER_FAILURE
 	HANDOVER_NOTIFICATION
 	HANDOVER_CANCEL
 	HANDOVER_SUCCESS
 	PATH_SWITCH_REQUEST
 	RESET
+	RESET_ACKNOWLEDGE
 	ERROR_INDICATION
 	NAS_NON_DELIVERY_INDICATION
 	ENB_CONFIGURATION_UPDATE
@@ -94,9 +106,9 @@ var S1AP_PROCEDURE_CODES = map[int]string{
 	8:  "E-RABReleaseIndication",
 	9:  "InitialContextSetup",
 	10: "Paging",
-	11: "downlinkNASTransport",
-	12: "initialUEMessage",
-	13: "uplinkNASTransport",
+	11: "DownlinkNASTransport",
+	12: "InitialUEMessage",
+	13: "UplinkNASTransport",
 	14: "Reset",
 	15: "ErrorIndication",
 	16: "NASNonDeliveryIndication",
@@ -158,6 +170,43 @@ func GetProcedureName(code int) string {
 		return name
 	}
 	return "Unknown"
+}
+
+// Function to get specific message name based on message type and procedure code
+func GetMessageName(messageType int, procedureCode int) string {
+	switch messageType {
+	case UE_CONTEXT_RELEASE_COMPLETE:
+		return "UEContextReleaseComplete"
+	case UE_CONTEXT_RELEASE:
+		return "UEContextReleaseCommand"
+	case HANDOVER_COMMAND:
+		return "HandoverCommand"
+	case HANDOVER_REQUEST_ACKNOWLEDGE:
+		return "HandoverRequestAcknowledge"
+	case E_RAB_SETUP_RESPONSE:
+		return "E-RABSetupResponse"
+	case E_RAB_MODIFY_RESPONSE:
+		return "E-RABModifyResponse"
+	case INITIAL_CONTEXT_SETUP_RESPONSE:
+		return "InitialContextSetupResponse"
+	case S1_SETUP_RESPONSE:
+		return "S1SetupResponse"
+	case RESET_ACKNOWLEDGE:
+		return "ResetAcknowledge"
+	case HANDOVER_PREPARATION_FAILURE:
+		return "HandoverPreparationFailure"
+	case HANDOVER_FAILURE:
+		return "HandoverFailure"
+	case E_RAB_SETUP_FAILURE:
+		return "E-RABSetupFailure"
+	case INITIAL_CONTEXT_SETUP_FAILURE:
+		return "InitialContextSetupFailure"
+	case S1_SETUP_FAILURE:
+		return "S1SetupFailure"
+	default:
+		// Fall back to procedure name for other message types
+		return GetProcedureName(procedureCode)
+	}
 }
 
 // Function to extract real procedure code from ASN.1 structure
