@@ -14,6 +14,16 @@ import (
 // Connect établit une connexion à MongoDB et renvoie un handle vers la collection spécifiée.
 // Si la connexion échoue, il logue une erreur et renvoie nil.
 func Connect(uri, dbName, collectionName string) *mongo.Collection {
+	client, collection := ConnectWithClient(uri, dbName, collectionName)
+	if client == nil {
+		return nil
+	}
+	return collection
+}
+
+// ConnectWithClient établit une connexion à MongoDB et renvoie le client ET la collection.
+// Si la connexion échoue, il logue une erreur et renvoie nil, nil.
+func ConnectWithClient(uri, dbName, collectionName string) (*mongo.Client, *mongo.Collection) {
 	log.Printf("Connecting to MongoDB at %s...", uri)
 
 	// Créer un client avec les options spécifiées.
@@ -27,14 +37,14 @@ func Connect(uri, dbName, collectionName string) *mongo.Collection {
 	client, err := mongo.Connect(ctx, clientOptions)
 	if err != nil {
 		log.Printf("ERROR: Failed to create MongoDB client: %v", err)
-		return nil
+		return nil, nil
 	}
 
 	// Vérifier que la connexion a été établie avec succès.
 	err = client.Ping(ctx, nil)
 	if err != nil {
 		log.Printf("ERROR: Failed to connect to MongoDB: %v", err)
-		return nil
+		return nil, nil
 	}
 
 	log.Println("Successfully connected to MongoDB!")
@@ -43,7 +53,7 @@ func Connect(uri, dbName, collectionName string) *mongo.Collection {
 	// Créer des index pour optimiser les requêtes de session
 	CreateSessionIndexes(collection)
 
-	return collection
+	return client, collection
 }
 
 // CreateSessionIndexes crée les index nécessaires pour optimiser les requêtes de session UE

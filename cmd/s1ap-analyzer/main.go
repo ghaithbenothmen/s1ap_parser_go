@@ -21,13 +21,16 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -64,6 +67,10 @@ type Config struct {
 	MongoDB         string 
 	MongoCollection string 
 	SessionsFile    string // Path to store completed sessions JSON file
+	JSONOutput      string // Path to store decoded packets JSON file
+
+	Interface       string        // Interface réseau pour capture en direct
+    Duration        time.Duration // Durée de capture
 }
 
 // S1APMessage represents a parsed S1AP message
@@ -112,6 +119,31 @@ type UeSessionDocument struct {
 	ProcedureStats    map[string]int  `bson:"procedure_stats,omitempty"` // Compteur par type de procédure
 	FirstProcedure    string          `bson:"first_procedure,omitempty"`
 	LastProcedure     string          `bson:"last_procedure,omitempty"`
+	
+	// Informations UE pour liaison avec Paging
+	STMSI             *STMSIInfo      `bson:"s_tmsi,omitempty"` // S-TMSI extrait des messages InitialUE
+}
+
+// STMSIInfo représente les informations S-TMSI pour la liaison des messages Paging
+type STMSIInfo struct {
+	MMEC  string `bson:"mmec"`  // MME Code
+	MTMSI string `bson:"mtmsi"` // M-TMSI
+}
+
+// String retourne une représentation string du S-TMSI
+func (s *STMSIInfo) String() string {
+	if s == nil {
+		return ""
+	}
+	return fmt.Sprintf("MMEC:%s,M-TMSI:%s", s.MMEC, s.MTMSI)
+}
+
+// Equals compare deux S-TMSI
+func (s *STMSIInfo) Equals(other *STMSIInfo) bool {
+	if s == nil || other == nil {
+		return false
+	}
+	return s.MMEC == other.MMEC && s.MTMSI == other.MTMSI
 }
 
 func main() {
@@ -122,8 +154,8 @@ func main() {
 		os.Exit(0)
 	}
 
-	if config.PcapFile == "" {
-		fmt.Fprintf(os.Stderr, "Error: PCAP file is required\n\n")
+	if config.PcapFile == "" && config.Interface == "" {
+		fmt.Fprintf(os.Stderr, "Error: PCAP file or interface is required\n\n")
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -135,48 +167,47 @@ func main() {
 }
 
 func parseFlags() *Config {
-	config := &Config{}
-	
-	flag.StringVar((*string)(&config.Format), "format", "simple", "Output format: simple, detailed, json")
-	flag.IntVar(&config.Limit, "limit", 0, "Limit number of packets to analyze (0 = no limit)")
-	flag.BoolVar(&config.StatsOnly, "stats", false, "Show statistics summary only")
-	flag.BoolVar(&config.Debug, "debug", false, "Enable debug output")
-	flag.BoolVar(&config.ShowHelp, "help", false, "Show help message")
+    config := &Config{}
+    
+    flag.StringVar((*string)(&config.Format), "format", "simple", "Output format: simple, detailed, json")
+    flag.IntVar(&config.Limit, "limit", 0, "Limit number of packets to analyze (0 = no limit)")
+    flag.BoolVar(&config.StatsOnly, "stats", false, "Show statistics summary only")
+    flag.BoolVar(&config.Debug, "debug", false, "Enable debug output")
+    flag.BoolVar(&config.ShowHelp, "help", false, "Show help message")
 
-	// AJOUTÉ : Drapeaux pour la configuration de MongoDB
-	flag.BoolVar(&config.MongoStore, "mongo-store", false, "Enable storing results in MongoDB")
-	flag.StringVar(&config.MongoURI, "mongo-uri", "mongodb://10.200.0.21:27017", "MongoDB connection URI")
-	flag.StringVar(&config.MongoDB, "mongo-db", "s1ap_db", "MongoDB database name")
-	flag.StringVar(&config.MongoCollection, "mongo-collection", "messages", "MongoDB collection name for S1AP messages")
-	flag.StringVar(&config.SessionsFile, "sessions-file", "completed_sessions.json", "Path to store completed sessions JSON file")
+    // NOUVEAU : Support pour capture en temps réel
+    flag.StringVar(&config.Interface, "interface", "", "Network interface for live capture (e.g., enp27s0f1)")
+    flag.DurationVar(&config.Duration, "duration", 0, "Capture duration for live analysis (0 = unlimited)")
 
-	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "S1AP Protocol Analyzer\n")
-		fmt.Fprintf(os.Stderr, "======================\n\n")
-		fmt.Fprintf(os.Stderr, "A professional tool for analyzing S1AP messages in PCAP files.\n\n")
-		fmt.Fprintf(os.Stderr, "Usage: %s [options] <pcap-file>\n\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "Options:\n")
-		flag.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "\nExamples:\n")
-		fmt.Fprintf(os.Stderr, "  %s capture.pcap\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s -format detailed -limit 1000 capture.pcap\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s -stats capture.pcap\n", os.Args[0])
+    // MongoDB flags
+    flag.BoolVar(&config.MongoStore, "mongo-store", false, "Enable storing results in MongoDB")
+    flag.StringVar(&config.MongoURI, "mongo-uri", "mongodb://10.200.0.21:27017", "MongoDB connection URI")
+    flag.StringVar(&config.MongoDB, "mongo-db", "s1ap_db", "MongoDB database name")
+    flag.StringVar(&config.MongoCollection, "mongo-collection", "messages", "MongoDB collection name for S1AP messages")
+    flag.StringVar(&config.SessionsFile, "sessions-file", "completed_sessions.json", "Path to store completed sessions JSON file")
+    flag.StringVar(&config.JSONOutput, "json-output", "", "Path to store decoded packets JSON file (for verification)")
 
-		fmt.Fprintf(os.Stderr, "\nMongoDB Options:\n")
-		fmt.Fprintf(os.Stderr, "  -mongo-store\n\tEnable storing results in MongoDB.\n")
-		fmt.Fprintf(os.Stderr, "  -mongo-uri string\n\tMongoDB connection URI. (default \"mongodb://10.200.0.21:27017\")\n")
-		fmt.Fprintf(os.Stderr, "  -mongo-db string\n\tMongoDB database name. (default \"s1ap_db\")\n")
-		fmt.Fprintf(os.Stderr, "  -mongo-collection string\n\tMongoDB collection name. (default \"messages\")\n")
-		fmt.Fprintf(os.Stderr, "  -sessions-file string\n\tPath to store completed sessions JSON file. (default \"completed_sessions.json\")\n")
-	}
-	
-	flag.Parse()
-	
-	if flag.NArg() > 0 {
-		config.PcapFile = flag.Arg(0)
-	}
-	
-	return config
+    flag.Usage = func() {
+        fmt.Fprintf(os.Stderr, "S1AP Protocol Analyzer\n")
+        fmt.Fprintf(os.Stderr, "======================\n\n")
+        fmt.Fprintf(os.Stderr, "A professional tool for analyzing S1AP messages in PCAP files or live capture.\n\n")
+        fmt.Fprintf(os.Stderr, "Usage: %s [options] [pcap-file]\n\n", os.Args[0])
+        fmt.Fprintf(os.Stderr, "Options:\n")
+        flag.PrintDefaults()
+        fmt.Fprintf(os.Stderr, "\nExamples:\n")
+        fmt.Fprintf(os.Stderr, "  %s capture.pcap\n", os.Args[0])
+        fmt.Fprintf(os.Stderr, "  %s -format detailed -limit 1000 capture.pcap\n", os.Args[0])
+        fmt.Fprintf(os.Stderr, "  %s -interface enp27s0f1 -duration 30s\n", os.Args[0])
+        fmt.Fprintf(os.Stderr, "  %s -interface enp27s0f1 -mongo-store\n", os.Args[0])
+    }
+    
+    flag.Parse()
+    
+    if flag.NArg() > 0 {
+        config.PcapFile = flag.Arg(0)
+    }
+    
+    return config
 }
 
 // Analyzer handles the S1AP analysis process
@@ -184,8 +215,13 @@ type Analyzer struct {
 	config *Config
 	stats  *Statistics
 	mongoCollection *mongo.Collection 
+	mongoClient *mongo.Client // Ajout du client MongoDB pour accéder à d'autres collections
 	sessionsFileMutex sync.Mutex // Protects concurrent access to sessions file
 	activeSessionHandlers sync.WaitGroup // Tracks active session completion handlers
+	
+	// JSON output support
+	jsonMessages []*S1APMessage
+	jsonMutex    sync.Mutex
 }
 
 // NewAnalyzer creates a new analyzer instance
@@ -196,14 +232,16 @@ func NewAnalyzer(config *Config) *Analyzer {
 			ProcedureStats: make(map[string]int),
 			StartTime:      time.Now(),
 		},
+		jsonMessages: make([]*S1APMessage, 0),
 	}
 
 	// Configuration MongoDB
 	if config.MongoStore {
-		collection := db.Connect(config.MongoURI, config.MongoDB, config.MongoCollection)
-		if collection == nil {
+		client, collection := db.ConnectWithClient(config.MongoURI, config.MongoDB, config.MongoCollection)
+		if client == nil || collection == nil {
 			log.Fatal("Could not establish MongoDB connection. Aborting.")
 		}
+		analyzer.mongoClient = client
 		analyzer.mongoCollection = collection
 		log.Printf("INFO: MongoDB storage enabled - DB: %s, Collection: %s", config.MongoDB, config.MongoCollection)
 		log.Printf("INFO: Completed sessions will be saved to: %s", config.SessionsFile)
@@ -239,44 +277,65 @@ func (a *Analyzer) initializeSessionsFile() {
 
 // Run executes the analysis
 func (a *Analyzer) Run() error {
-	defer func() {
-		// Attendre que tous les gestionnaires de session se terminent
-		if a.config.MongoStore {
-			log.Printf("INFO: Waiting for session completion handlers to finish...")
-			a.activeSessionHandlers.Wait()
-		}
-		
-		a.stats.EndTime = time.Now()
-		a.stats.ProcessingTime = a.stats.EndTime.Sub(a.stats.StartTime)
-	}()
+    defer func() {
+        if a.config.MongoStore {
+            log.Printf("INFO: Waiting for session completion handlers to finish...")
+            a.activeSessionHandlers.Wait()
+        }
+        
+        a.stats.EndTime = time.Now()
+        a.stats.ProcessingTime = a.stats.EndTime.Sub(a.stats.StartTime)
+    }()
 
-	if !a.config.StatsOnly && a.config.Format != FormatJSON {
-		a.printHeader()
-	}
+    if !a.config.StatsOnly && a.config.Format != FormatJSON {
+        a.printHeader()
+    }
 
-	handle, err := pcap.OpenOffline(a.config.PcapFile)
-	if err != nil {
-		return fmt.Errorf("failed to open PCAP file: %w", err)
-	}
-	defer handle.Close()
+    var handle *pcap.Handle
+    var err error
 
-	var processedMessages []*S1APMessage
-	if a.config.MongoStore {
-		// Si mongo est activé, nous traitons et stockons en temps réel
-		if err := a.analyzeAndStorePackets(handle); err != nil {
-			return fmt.Errorf("packet analysis and storage failed: %w", err)
-		}
-		// Pour l'affichage final, nous laissons la slice vide pour l'instant.
-		// On pourrait la remplir si nécessaire, mais l'objectif principal est le stockage.
-	} else {
-		// Comportement original si mongo n'est pas activé
-		processedMessages, err = a.analyzePackets(handle)
-		if err != nil {
-			return fmt.Errorf("packet analysis failed: %w", err)
-		}
-	}
+    // NOUVEAU : Support pour capture en temps réel
+    if a.config.Interface != "" {
+        // Capture en temps réel
+        handle, err = pcap.OpenLive(a.config.Interface, 1600, true, pcap.BlockForever)
+        if err != nil {
+            return fmt.Errorf("failed to open interface %s: %w", a.config.Interface, err)
+        }
+        
+        // Filtre pour S1AP (port 36412)
+        if err := handle.SetBPFFilter("port 36412"); err != nil {
+            return fmt.Errorf("failed to set BPF filter: %w", err)
+        }
+        
+        log.Printf("INFO: Started live capture on interface %s", a.config.Interface)
+        if a.config.Duration > 0 {
+            log.Printf("INFO: Capture duration: %v", a.config.Duration)
+        }
+    } else if a.config.PcapFile != "" {
+        // Lecture depuis fichier PCAP
+        handle, err = pcap.OpenOffline(a.config.PcapFile)
+        if err != nil {
+            return fmt.Errorf("failed to open PCAP file: %w", err)
+        }
+    } else {
+        return fmt.Errorf("either PCAP file or interface must be specified")
+    }
+    
+    defer handle.Close()
 
-	return a.outputResults(processedMessages)
+    var processedMessages []*S1APMessage
+    if a.config.MongoStore {
+        if err := a.analyzeAndStorePackets(handle); err != nil {
+            return fmt.Errorf("packet analysis and storage failed: %w", err)
+        }
+    } else {
+        processedMessages, err = a.analyzePackets(handle)
+        if err != nil {
+            return fmt.Errorf("packet analysis failed: %w", err)
+        }
+    }
+
+    return a.outputResults(processedMessages)
 }
 
 func (a *Analyzer) extractUeIdentifiers(msg *S1APMessage) (mmeID, enbID int64) {
@@ -320,36 +379,94 @@ func (a *Analyzer) extractUeIdentifiers(msg *S1APMessage) (mmeID, enbID int64) {
 				i, ie.ID, ie.Name, ie.Value, ie.Value, ie.RawValue)
 		}
 	}
+	
+	// Debug pour les messages qui n'ont PAS d'identifiants UE (comme Paging)
+	if mmeID == -1 && enbID == -1 && a.config.Debug {
+		log.Printf("DEBUG: UE identifiers extracted - Packet: %d, MME_ID: %d, eNB_ID: %d, Procedure: %s", 
+			msg.PacketNumber, mmeID, enbID, msg.ProcedureName)
+	}
 
 	return mmeID, enbID
 }
 
-// handlePagingMessage traite les messages de paging qui peuvent contenir des identifiants UE
+// handlePagingMessage traite les messages de paging et essaie de les lier aux sessions UE existantes
 func (a *Analyzer) handlePagingMessage(msg *S1APMessage) error {
+	if a.config.Debug {
+		log.Printf("DEBUG: handlePagingMessage called - Packet: %d, Procedure: %s, IEs count: %d", 
+			msg.PacketNumber, msg.ProcedureName, len(msg.IEs))
+	}
+	
 	// Dans Paging, les identifiants UE peuvent être dans UEPagingID ou S-TMSI
 	var ueIdentifier string
+	var sTMSI string
+	var parsedSTMSI *STMSIInfo
 
 	for _, ie := range msg.IEs {
+		if a.config.Debug {
+			log.Printf("DEBUG: Processing IE - ID: %d, Name: %s, ValueType: %T, Value: %v", 
+				ie.ID, ie.Name, ie.Value, ie.Value)
+		}
+		
 		switch ie.ID {
 		case 43: // id_UEPagingID
 			if ie.RawValue != "" {
 				ueIdentifier = ie.RawValue
+				// Extraire le S-TMSI depuis la valeur décodée (format: "S_TMSI(MMEC:20, M-TMSI:e5 4d 89 49)")
+				if valueStr, ok := ie.Value.(string); ok && strings.Contains(valueStr, "S_TMSI(") {
+					// Parser depuis la string décodée
+					if parsed := a.parseSTMSIFromDecodedValue(valueStr); parsed != nil {
+						parsedSTMSI = parsed
+						sTMSI = parsed.String()
+					}
+				} else {
+					// Essayer de parser le raw value
+					if parsed := a.parseSTMSI(ie.RawValue); parsed != nil {
+						parsedSTMSI = parsed
+						sTMSI = parsed.String()
+					}
+				}
 			}
 		case 96: // id_S_TMSI
 			if ie.RawValue != "" {
-				ueIdentifier = ie.RawValue
+				sTMSI = ie.RawValue
+				// Essayer de parser le S-TMSI
+				if parsed := a.parseSTMSI(ie.RawValue); parsed != nil {
+					parsedSTMSI = parsed
+				}
 			}
 		case 89: // id_MMEname (peut aider à identifier la source)
 			// Pour information additionnelle
 		}
 	}
 
-	if ueIdentifier != "" && a.config.Debug {
-		log.Printf("DEBUG: Paging message with UE identifier: %s (Packet %d)", ueIdentifier, msg.PacketNumber)
+	if a.config.Debug {
+		log.Printf("DEBUG: Paging message - Packet: %d, UE ID: %s, S-TMSI: %s", 
+			msg.PacketNumber, ueIdentifier, sTMSI)
 	}
 
-	// Pour l'instant, on ne les ajoute pas aux sessions UE car ils n'ont pas d'eNB_UE_S1AP_ID
-	// mais on pourrait les traiter séparément ou les ajouter à une collection de messages généraux
+	// Essayer de lier le Paging à une session UE existante
+	if parsedSTMSI != nil && a.mongoCollection != nil {
+		if sessionID, err := a.linkPagingToSession(msg, parsedSTMSI); err != nil {
+			if a.config.Debug {
+				log.Printf("DEBUG: Failed to link Paging to session: %v", err)
+			}
+		} else if sessionID != "" {
+			if a.config.Debug {
+				log.Printf("DEBUG: Paging linked to session: %s (S-TMSI: %s)", sessionID, sTMSI)
+			}
+			return nil // Successfully linked to session
+		}
+	}
+
+	// Si pas de liaison possible, stocker dans collection générale
+	if a.mongoCollection != nil {
+		if err := a.storeGeneralMessage(msg, "paging", sTMSI); err != nil {
+			log.Printf("WARN: Failed to store Paging message: %v", err)
+		} else if a.config.Debug {
+			log.Printf("DEBUG: Paging message stored in general collection - Packet: %d, S-TMSI: %s", msg.PacketNumber, sTMSI)
+		}
+	}
+
 	return nil
 }
 
@@ -438,16 +555,29 @@ func (a *Analyzer) extractUeIdentifiersExtended(msg *S1APMessage) (mmeID, enbID 
 // processAndStoreMessage traite et stocke un message S1AP dans MongoDB
 // avec gestion des sessions UE basée sur eNB_UE_S1AP_ID
 func (a *Analyzer) processAndStoreMessage(msg *S1APMessage) error {
+	// Debug pour voir tous les messages traités
+	if a.config.Debug {
+		log.Printf("DEBUG: Processing message - Packet: %d, Procedure: %s, SrcIP: %s, DstIP: %s, IEs: %d", 
+			msg.PacketNumber, msg.ProcedureName, msg.SrcIP, msg.DstIP, len(msg.IEs))
+	}
+
+	// Store in JSON if output file specified
+	if a.config.JSONOutput != "" {
+		a.jsonMutex.Lock()
+		a.jsonMessages = append(a.jsonMessages, msg)
+		a.jsonMutex.Unlock()
+	}
+
 	if a.mongoCollection == nil {
 		return nil // Ne rien faire si MongoDB n'est pas configuré
 	}
 
 	mmeID, enbID := a.extractUeIdentifiers(msg)
 
-	// Debug pour voir tous les messages traités
+	// Debug supplémentaire pour voir les identifiants extraits
 	if a.config.Debug {
-		log.Printf("DEBUG: Processing message - Packet: %d, Procedure: %s, MME_ID: %d, eNB_ID: %d, SrcIP: %s, DstIP: %s", 
-			msg.PacketNumber, msg.ProcedureName, mmeID, enbID, msg.SrcIP, msg.DstIP)
+		log.Printf("DEBUG: UE identifiers extracted - Packet: %d, MME_ID: %d, eNB_ID: %d", 
+			msg.PacketNumber, mmeID, enbID)
 	}
 
 	// Messages qui appartiennent à une session UE spécifique (ont un eNB_UE_S1AP_ID)
@@ -488,9 +618,38 @@ func (a *Analyzer) processAndStoreMessage(msg *S1APMessage) error {
 		}
 		return a.handleDownlinkNASTransport(msg)
 	case "S1Setup", "Reset", "ErrorIndication", "OverloadStart", "OverloadStop":
-		// Messages de gestion générale - pas liés à des sessions UE spécifiques
-		if a.config.Debug {
-			log.Printf("DEBUG: Message de gestion générale ignoré pour sessions UE (Packet %d, Proc: %s)", msg.PacketNumber, msg.ProcedureName)
+		// Messages de gestion générale - stocker dans collection générale
+		if a.mongoCollection != nil {
+			if err := a.storeGeneralMessage(msg, "management", ""); err != nil {
+				log.Printf("WARN: Failed to store management message: %v", err)
+			} else if a.config.Debug {
+				log.Printf("DEBUG: Management message stored - Packet: %d, Proc: %s", msg.PacketNumber, msg.ProcedureName)
+			}
+		}
+		return nil
+	case "CellTrafficTrace", "TraceFailureIndication":
+		// Messages de trace - stocker même sans identifiants UE
+		if a.mongoCollection != nil {
+			if err := a.storeGeneralMessage(msg, "trace", ""); err != nil {
+				log.Printf("WARN: Failed to store trace message: %v", err)
+			} else if a.config.Debug {
+				log.Printf("DEBUG: Trace message stored - Packet: %d, Proc: %s", msg.PacketNumber, msg.ProcedureName)
+			}
+		}
+		return nil
+	case "InitialContextSetupResponse", "UEContextReleaseRequest", "NASNonDeliveryIndication":
+		// Messages de réponse/requête - essayer d'extraire des identifiants alternatifs puis stocker
+		mmeID, enbID := a.extractUeIdentifiersExtended(msg)
+		if enbID != -1 {
+			return a.addMessageToSession(msg, mmeID, enbID)
+		}
+		// Si pas d'identifiants, stocker en général
+		if a.mongoCollection != nil {
+			if err := a.storeGeneralMessage(msg, "response", ""); err != nil {
+				log.Printf("WARN: Failed to store response message: %v", err)
+			} else if a.config.Debug {
+				log.Printf("DEBUG: Response message stored without UE IDs - Packet: %d, Proc: %s", msg.PacketNumber, msg.ProcedureName)
+			}
 		}
 		return nil
 	default:
@@ -568,6 +727,9 @@ func (a *Analyzer) addMessageToSession(msg *S1APMessage, mmeID, enbID int64) err
 			log.Printf("DEBUG: Session UE mise à jour - SessionID: %s (Proc: %s)", sessionID, msg.ProcedureName)
 		}
 	}
+
+	// Extraire et stocker le S-TMSI si le message en contient un
+	go a.extractAndStoreSTMSI(msg, sessionID)
 
 	return nil
 }
@@ -648,6 +810,259 @@ func (a *Analyzer) handleCompletedSession(mmeID, enbID int64) error {
 	}
 
 	return nil
+}
+
+// storeGeneralMessage stocke un message S1AP dans une collection générale MongoDB
+// pour les messages qui ne font pas partie d'une session UE spécifique
+func (a *Analyzer) storeGeneralMessage(msg *S1APMessage, category, identifier string) error {
+	if a.mongoCollection == nil {
+		return nil // Ne rien faire si MongoDB n'est pas configuré
+	}
+
+	now := time.Now()
+	
+	// Créer un document pour le message général
+	generalMessage := bson.M{
+		"packet_number":    msg.PacketNumber,
+		"timestamp":        now,
+		"procedure_name":   msg.ProcedureName,
+		"category":         category, // "paging", "management", "trace", "response"
+		"identifier":       identifier, // S-TMSI pour paging, vide pour autres
+		"src_ip":           msg.SrcIP,
+		"dst_ip":           msg.DstIP,
+		"ies":              msg.IEs,
+		"ie_count":         len(msg.IEs),
+	}
+
+	// Ajouter des champs spécifiques selon le type
+	switch category {
+	case "paging":
+		if identifier != "" {
+			generalMessage["s_tmsi"] = identifier
+		}
+	case "trace":
+		generalMessage["trace_type"] = msg.ProcedureName
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Utiliser une collection différente pour les messages généraux
+	generalCollection := a.mongoClient.Database(a.config.MongoDB).Collection("general_messages")
+	
+	_, err := generalCollection.InsertOne(ctx, generalMessage)
+	if err != nil {
+		return fmt.Errorf("failed to insert general message: %w", err)
+	}
+
+	return nil
+}
+
+// parseSTMSI parse un S-TMSI depuis une chaîne de caractères (format: "S_TMSI(MMEC:20, M-TMSI:xx xx xx xx)")
+func (a *Analyzer) parseSTMSI(sTMSIStr string) *STMSIInfo {
+	if sTMSIStr == "" {
+		return nil
+	}
+
+	// Patterns pour différents formats possibles
+	// Format 1: "S_TMSI(MMEC:20, M-TMSI:c6 c8 fc 93)"
+	if strings.Contains(sTMSIStr, "S_TMSI(") {
+		if mmecStart := strings.Index(sTMSIStr, "MMEC:"); mmecStart != -1 {
+			mmecStart += 5
+			mmecEnd := strings.Index(sTMSIStr[mmecStart:], ",")
+			if mmecEnd == -1 {
+				mmecEnd = strings.Index(sTMSIStr[mmecStart:], ")")
+			}
+			if mmecEnd != -1 {
+				mmec := strings.TrimSpace(sTMSIStr[mmecStart : mmecStart+mmecEnd])
+				
+				if mtmsiStart := strings.Index(sTMSIStr, "M-TMSI:"); mtmsiStart != -1 {
+					mtmsiStart += 7
+					mtmsiEnd := strings.Index(sTMSIStr[mtmsiStart:], ")")
+					if mtmsiEnd != -1 {
+						mtmsi := strings.TrimSpace(sTMSIStr[mtmsiStart : mtmsiStart+mtmsiEnd])
+						return &STMSIInfo{MMEC: mmec, MTMSI: mtmsi}
+					}
+				}
+			}
+		}
+	}
+
+	// Format 2: Direct hex values "MMEC=20, M-TMSI=c6c8fc93"
+	if strings.Contains(sTMSIStr, "MMEC=") {
+		parts := strings.Split(sTMSIStr, ",")
+		var mmec, mtmsi string
+		
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if strings.HasPrefix(part, "MMEC=") {
+				mmec = strings.TrimPrefix(part, "MMEC=")
+			} else if strings.Contains(part, "M-TMSI=") {
+				mtmsi = strings.Split(part, "M-TMSI=")[1]
+			}
+		}
+		
+		if mmec != "" && mtmsi != "" {
+			return &STMSIInfo{MMEC: mmec, MTMSI: mtmsi}
+		}
+	}
+
+	return nil
+}
+
+// parseSTMSIFromDecodedValue extrait S-TMSI depuis une valeur décodée comme "S_TMSI(MMEC:20, M-TMSI:e5 4d 89 49)"
+func (a *Analyzer) parseSTMSIFromDecodedValue(decodedValue string) *STMSIInfo {
+	if a.config.Debug {
+		log.Printf("DEBUG: parseSTMSIFromDecodedValue called with: %s", decodedValue)
+	}
+	
+	// Rechercher les patterns dans le texte décodé - format: S_TMSI(MMEC:20, M-TMSI:e5 4d 89 49)
+	mmecPattern := `MMEC:([0-9a-fA-F]+)`
+	mtmsiPattern := `M-TMSI:([0-9a-fA-F\s]+)\)`
+	
+	mmecMatches := regexp.MustCompile(mmecPattern).FindStringSubmatch(decodedValue)
+	mtmsiMatches := regexp.MustCompile(mtmsiPattern).FindStringSubmatch(decodedValue)
+	
+	if len(mmecMatches) >= 2 && len(mtmsiMatches) >= 2 {
+		mmecStr := mmecMatches[1]
+		mtmsiStr := strings.ReplaceAll(mtmsiMatches[1], " ", "") // Enlever les espaces
+		
+		if a.config.Debug {
+			log.Printf("DEBUG: Extracted MMEC=%s, M-TMSI=%s", mmecStr, mtmsiStr)
+		}
+		
+		// Convertir M-TMSI (hex string vers bytes pour validation)
+		mtmsiBytes, err := hex.DecodeString(mtmsiStr)
+		if err != nil || len(mtmsiBytes) != 4 {
+			if a.config.Debug {
+				log.Printf("DEBUG: M-TMSI validation failed: %v", err)
+			}
+			return nil
+		}
+		
+		result := &STMSIInfo{
+			MMEC:  mmecStr,
+			MTMSI: mtmsiStr,
+		}
+		
+		if a.config.Debug {
+			log.Printf("DEBUG: parseSTMSIFromDecodedValue success: %s", result.String())
+		}
+		
+		return result
+	}
+	
+	if a.config.Debug {
+		log.Printf("DEBUG: parseSTMSIFromDecodedValue failed to match patterns")
+	}
+	
+	return nil
+}
+
+// parseSTMSIFromPagingID parse un S-TMSI depuis UEPagingID 
+func (a *Analyzer) parseSTMSIFromPagingID(pagingID string) *STMSIInfo {
+	// Pour l'instant, on assume que UEPagingID peut contenir du S-TMSI
+	return a.parseSTMSI(pagingID)
+}
+
+// linkPagingToSession essaie de lier un message Paging à une session UE existante
+func (a *Analyzer) linkPagingToSession(msg *S1APMessage, sTMSI *STMSIInfo) (string, error) {
+	if a.mongoCollection == nil || sTMSI == nil {
+		return "", fmt.Errorf("invalid parameters")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Chercher une session active avec le même S-TMSI
+	filter := bson.M{
+		"status": "active",
+		"s_tmsi": bson.M{
+			"mmec":  sTMSI.MMEC,
+			"mtmsi": sTMSI.MTMSI,
+		},
+	}
+
+	var session UeSessionDocument
+	err := a.mongoCollection.FindOne(ctx, filter).Decode(&session)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			// Pas de session trouvée avec ce S-TMSI
+			return "", nil
+		}
+		return "", fmt.Errorf("database query failed: %w", err)
+	}
+
+	// Ajouter le message Paging à la session trouvée
+	now := time.Now()
+	update := bson.M{
+		"$push": bson.M{"messages": msg},
+		"$set": bson.M{
+			"last_update":    now,
+			"last_procedure": msg.ProcedureName,
+		},
+		"$inc": bson.M{
+			"message_count": 1,
+			"procedure_stats." + msg.ProcedureName: 1,
+		},
+	}
+
+	updateFilter := bson.M{"session_id": session.SessionID}
+	result, err := a.mongoCollection.UpdateOne(ctx, updateFilter, update)
+	if err != nil {
+		return "", fmt.Errorf("failed to update session with Paging: %w", err)
+	}
+
+	if result.ModifiedCount > 0 {
+		log.Printf("INFO: Paging message linked to session %s (S-TMSI: %s)", session.SessionID, sTMSI.String())
+		return session.SessionID, nil
+	}
+
+	return "", fmt.Errorf("no session was updated")
+}
+
+// extractAndStoreSTMSI extrait et stocke le S-TMSI d'un message dans la session
+func (a *Analyzer) extractAndStoreSTMSI(msg *S1APMessage, sessionID string) {
+	if a.mongoCollection == nil {
+		return
+	}
+
+	var sTMSI *STMSIInfo
+	
+	// Extraire S-TMSI depuis les IEs du message
+	for _, ie := range msg.IEs {
+		if ie.ID == 96 && ie.RawValue != "" { // id_S_TMSI
+			if parsed := a.parseSTMSI(ie.RawValue); parsed != nil {
+				sTMSI = parsed
+				break
+			}
+		}
+	}
+
+	if sTMSI == nil {
+		return // Pas de S-TMSI à stocker
+	}
+
+	// Mettre à jour la session avec le S-TMSI
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	filter := bson.M{"session_id": sessionID}
+	update := bson.M{
+		"$set": bson.M{
+			"s_tmsi": sTMSI,
+		},
+	}
+
+	result, err := a.mongoCollection.UpdateOne(ctx, filter, update)
+	if err != nil {
+		log.Printf("WARN: Failed to store S-TMSI for session %s: %v", sessionID, err)
+		return
+	}
+
+	if result.ModifiedCount > 0 && a.config.Debug {
+		log.Printf("DEBUG: S-TMSI stored for session %s: %s", sessionID, sTMSI.String())
+	}
 }
 
 // appendSessionToFile ajoute une session terminée au fichier JSON
@@ -768,28 +1183,50 @@ func (a *Analyzer) analyzePackets(handle *pcap.Handle) ([]*S1APMessage, error) {
 }
 
 func (a *Analyzer) analyzeAndStorePackets(handle *pcap.Handle) error {
-	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
+    packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
+    
+    // Pour la capture en temps réel avec durée limitée
+    var timeout <-chan time.Time
+    if a.config.Duration > 0 && a.config.Interface != "" {
+        timeout = time.After(a.config.Duration)
+    }
 
-	for packet := range packetSource.Packets() {
-		a.stats.TotalFrames++
+    for {
+        select {
+        case <-timeout:
+            log.Printf("INFO: Capture duration reached, stopping analysis")
+            return nil
+            
+        case packet, ok := <-packetSource.Packets():
+            if !ok {
+                // Canal fermé (fin de fichier PCAP)
+                return nil
+            }
+            
+            a.stats.TotalFrames++
 
-		if a.config.Limit > 0 && a.stats.TotalFrames > a.config.Limit {
-			break
-		}
+            if a.config.Limit > 0 && a.stats.TotalFrames > a.config.Limit {
+                log.Printf("INFO: Packet limit reached, stopping analysis")
+                return nil
+            }
 
-		s1apMessages := a.extractS1APMessages(packet)
-		if len(s1apMessages) > 0 {
-			a.stats.S1APFrames++
-			for _, msg := range s1apMessages {
-				// La logique principale est ici !
-				if err := a.processAndStoreMessage(msg); err != nil {
-					// Logguer l'erreur mais continuer l'analyse
-					log.Printf("WARN: Failed to store message for packet %d: %v", msg.PacketNumber, err)
-				}
-			}
-		}
-	}
-	return nil
+            s1apMessages := a.extractS1APMessages(packet)
+            if len(s1apMessages) > 0 {
+                a.stats.S1APFrames++
+                for _, msg := range s1apMessages {
+                    if err := a.processAndStoreMessage(msg); err != nil {
+                        log.Printf("WARN: Failed to store message for packet %d: %v", msg.PacketNumber, err)
+                    }
+                }
+            }
+            
+            // Afficher des stats périodiques pour la capture en temps réel
+            if a.config.Interface != "" && a.stats.TotalFrames%1000 == 0 {
+                log.Printf("INFO: Processed %d frames, found %d S1AP frames", 
+                    a.stats.TotalFrames, a.stats.S1APFrames)
+            }
+        }
+    }
 }
 
 func (a *Analyzer) extractS1APMessages(packet gopacket.Packet) []*S1APMessage {
@@ -1062,14 +1499,25 @@ func (a *Analyzer) analyzePDUType(payload []byte) (string, int) {
 }
 
 func (a *Analyzer) outputResults(messages []*S1APMessage) error {
+	var err error
+	
 	switch a.config.Format {
 	case FormatJSON:
-		return a.outputJSON(messages)
+		err = a.outputJSON(messages)
 	case FormatDetailed:
-		return a.outputDetailed(messages)
+		err = a.outputDetailed(messages)
 	default:
-		return a.outputSimple(messages)
+		err = a.outputSimple(messages)
 	}
+	
+	// Generate JSON output file if specified (after processing messages)
+	if a.config.JSONOutput != "" {
+		if jsonErr := a.generateJSONOutput(); jsonErr != nil {
+			log.Printf("ERROR: Failed to generate JSON output: %v", jsonErr)
+		}
+	}
+	
+	return err
 }
 
 func (a *Analyzer) outputSimple(messages []*S1APMessage) error {
@@ -1078,6 +1526,13 @@ func (a *Analyzer) outputSimple(messages []*S1APMessage) error {
 	}
 
 	for _, msg := range messages {
+		// Add to JSON output if specified
+		if a.config.JSONOutput != "" {
+			a.jsonMutex.Lock()
+			a.jsonMessages = append(a.jsonMessages, msg)
+			a.jsonMutex.Unlock()
+		}
+		
 		tsFloat := float64(msg.Timestamp.UnixNano()) / 1e9
 		fmt.Printf("packet_number: %d\n", msg.PacketNumber)
 		fmt.Printf("timestamp: %.6f\n", tsFloat)
@@ -1177,5 +1632,36 @@ func (a *Analyzer) outputStats() error {
 		}
 	}
 
+	return nil
+}
+
+// generateJSONOutput writes all collected messages to a JSON file
+func (a *Analyzer) generateJSONOutput() error {
+	a.jsonMutex.Lock()
+	defer a.jsonMutex.Unlock()
+
+	if len(a.jsonMessages) == 0 {
+		log.Printf("INFO: No messages to write to JSON file")
+		return nil
+	}
+
+	// Create output file
+	file, err := os.Create(a.config.JSONOutput)
+	if err != nil {
+		return fmt.Errorf("failed to create JSON output file: %w", err)
+	}
+	defer file.Close()
+
+	// Write each message as a separate JSON line (JSONL format)
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "  ")
+
+	for _, msg := range a.jsonMessages {
+		if err := encoder.Encode(msg); err != nil {
+			return fmt.Errorf("failed to encode message to JSON: %w", err)
+		}
+	}
+
+	log.Printf("INFO: Successfully wrote %d decoded messages to %s", len(a.jsonMessages), a.config.JSONOutput)
 	return nil
 }
