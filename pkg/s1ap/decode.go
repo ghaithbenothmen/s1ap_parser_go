@@ -51,6 +51,11 @@ package s1ap
 // #include "PLMNidentity.h"
 // #include "TAC.h"
 // #include "TBCD-STRING.h"
+// #include "InitialContextSetupResponse.h"
+// #include "E-RABSetupListCtxtSURes.h"
+// #include "E-RABSetupItemCtxtSURes.h"
+// #include "E-RAB-ID.h"
+// #include "GTP-TEID.h"
 // #include <stdio.h>
 // #include <stdlib.h>
 //
@@ -107,6 +112,45 @@ package s1ap
 //                       (stmsi->m_TMSI.buf[1] << 16) | 
 //                       (stmsi->m_TMSI.buf[2] << 8) | 
 //                       stmsi->m_TMSI.buf[3];
+//     }
+//     
+//     result.valid = 1;
+//     return result;
+// }
+//
+// // Extract E-RAB Setup Item data from E_RABSetupItemCtxtSURes structure
+// typedef struct ERABSetupItemData {
+//     long erab_id;                    // E-RAB ID
+//     uint8_t transport_address[16];   // Transport Layer Address (up to 16 bytes for IPv6)
+//     uint8_t transport_address_len;   // Length of transport address  
+//     uint32_t gtp_teid;              // GTP TEID
+//     int valid;                      // 1 if extraction successful, 0 otherwise
+// } ERABSetupItemData;
+//
+// ERABSetupItemData extractERABSetupItemData(void* erab_item_ptr) {
+//     ERABSetupItemData result = {0};
+//     if (!erab_item_ptr) return result;
+//     
+//     E_RABSetupItemCtxtSURes_t* erab_item = (E_RABSetupItemCtxtSURes_t*)erab_item_ptr;
+//     if (!erab_item) return result;
+//     
+//     // Extract E-RAB ID
+//     result.erab_id = erab_item->e_RAB_ID;
+//     
+//     // Extract Transport Layer Address
+//     if (erab_item->transportLayerAddress.buf && erab_item->transportLayerAddress.size > 0) {
+//         result.transport_address_len = (uint8_t)erab_item->transportLayerAddress.size;
+//         if (result.transport_address_len <= 16) {
+//             memcpy(result.transport_address, erab_item->transportLayerAddress.buf, result.transport_address_len);
+//         }
+//     }
+//     
+//     // Extract GTP TEID (4 bytes)
+//     if (erab_item->gTP_TEID.buf && erab_item->gTP_TEID.size >= 4) {
+//         result.gtp_teid = (erab_item->gTP_TEID.buf[0] << 24) | 
+//                          (erab_item->gTP_TEID.buf[1] << 16) | 
+//                          (erab_item->gTP_TEID.buf[2] << 8) | 
+//                          erab_item->gTP_TEID.buf[3];
 //     }
 //     
 //     result.valid = 1;
@@ -1894,6 +1938,81 @@ func getMNCDescription(mnc string) string {
 	}
 }
 
+// Enhanced E-RAB Setup List extraction matching Wireshark format
+func extractDetailedERABSetupList(erabList *C.E_RABSetupListCtxtSURes_t) (interface{}, string) {
+	if erabList == nil || erabList.list.count == 0 {
+		return "Empty E-RAB Setup List", "E-RAB Setup List: empty"
+	}
+
+	count := int(erabList.list.count)
+	
+	// Get E-RAB Setup Items from protocol container array
+	var erabContainers []*C.ProtocolIE_SingleContainer_8146P6_t
+	slice := (*reflect.SliceHeader)(unsafe.Pointer(&erabContainers))
+	slice.Cap = count
+	slice.Len = count
+	slice.Data = uintptr(unsafe.Pointer(erabList.list.array))
+
+	if len(erabContainers) > 0 && erabContainers[0] != nil {
+		// Get the first E-RAB Setup item
+		container := erabContainers[0]
+		// Cast to E-RABSetupItemCtxtSURes structure
+		erabItemPtr := (*C.E_RABSetupItemCtxtSURes_t)(unsafe.Pointer(&container.value.choice))
+		if erabItemPtr != nil {
+			// Use C function to extract E-RAB data safely
+			erabData := C.extractERABSetupItemData(unsafe.Pointer(erabItemPtr))
+			
+			if erabData.valid == 1 {
+				// Extract transport layer address
+				transportBytes := C.GoBytes(unsafe.Pointer(&erabData.transport_address[0]), C.int(erabData.transport_address_len))
+				transportHex := hex.EncodeToString(transportBytes)
+				
+				// Format IP address (assuming IPv4 for now)
+				var ipStr string
+				if len(transportBytes) == 4 {
+					ipAddr := net.IPv4(transportBytes[0], transportBytes[1], transportBytes[2], transportBytes[3])
+					ipStr = ipAddr.String()
+				} else {
+					ipStr = "unknown format"
+				}
+				
+				// Calculate decimal value for transport address
+				var decimalValue uint32
+				if len(transportBytes) >= 4 {
+					decimalValue = binary.BigEndian.Uint32(transportBytes[:4])
+				}
+				
+				// Format binary representation
+				var binaryStr string
+				if len(transportBytes) == 4 {
+					binaryStr = fmt.Sprintf("%08b  %08b  %08b  %08b", 
+						transportBytes[0], transportBytes[1], transportBytes[2], transportBytes[3])
+				}
+				
+				// GTP TEID
+				gtpTeidValue := uint32(erabData.gtp_teid)
+				gtpTeidHex := fmt.Sprintf("%08x", gtpTeidValue)
+				
+				// Format like Wireshark output
+				var value string
+				if count == 1 {
+					value = "1 item"
+				} else {
+					value = fmt.Sprintf("%d items", count)
+				}
+				
+				rawValue := fmt.Sprintf("Item 0: id-E-RABSetupItemCtxtSURes - e-RAB-ID: %d, transportLayerAddress: %s [bit length %d, %s decimal value %d], transportLayerAddress(IPv4): %s, gTP-TEID: %s", 
+					erabData.erab_id, transportHex, len(transportBytes)*8, binaryStr, decimalValue, ipStr, gtpTeidHex)
+				
+				return value, rawValue
+			}
+		}
+	}
+	
+	// Fallback if extraction failed
+	return fmt.Sprintf("E-RAB Setup List (%d items)", count), "E-RAB Setup List: extraction failed"
+}
+
 func extractPagingIEs(packet unsafe.Pointer) []*InformationElement {
 	log.Printf("DEBUG: Enhanced Paging IE extraction started")
 	var result []*InformationElement
@@ -3131,9 +3250,12 @@ func extractInitialContextSetupResponseIEs(packet unsafe.Pointer) []*Information
 			ieStruct.RawValue = fmt.Sprintf("%d", int32(*enb_id))
 			log.Printf("DEBUG: Extracted eNB_UE_S1AP_ID: %d", int32(*enb_id))
 		case C.ProtocolIE_ID_id_E_RABSetupListCtxtSURes:
-			ieStruct.Value = "E-RAB Setup List"
-			ieStruct.RawValue = "E-RAB Setup List structure present"
-			log.Printf("DEBUG: Extracted E-RAB Setup List")
+			// Extract E-RAB Setup List with detailed information
+			erabList := (*C.E_RABSetupListCtxtSURes_t)(unsafe.Pointer(&ie.value.choice))
+			value, rawValue := extractDetailedERABSetupList(erabList)
+			ieStruct.Value = value
+			ieStruct.RawValue = rawValue
+			log.Printf("DEBUG: Extracted detailed E-RAB Setup List")
 		case C.ProtocolIE_ID_id_E_RABFailedToSetupListCtxtSURes:
 			ieStruct.Value = "E-RAB Failed to Setup List"
 			ieStruct.RawValue = "E-RAB Failed to Setup List structure present"
