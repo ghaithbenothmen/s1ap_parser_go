@@ -7,6 +7,8 @@ package s1ap
 // #include "SuccessfulOutcome.h"
 // #include "UnsuccessfulOutcome.h"
 // #include "ProtocolIE-Field.h"
+// #include "ProtocolIE-SingleContainer.h"
+// #include "ProtocolIE-Container.h"
 // #include "Paging.h"
 // #include "UEPagingID.h"
 // #include "S-TMSI.h"
@@ -42,8 +44,74 @@ package s1ap
 // #include "CauseNas.h"
 // #include "CauseProtocol.h"
 // #include "CauseMisc.h"
+// #include "UEIdentityIndexValue.h"
+// #include "Extended-UEIdentityIndexValue.h"
+// #include "MME-Code.h"
+// #include "M-TMSI.h"
+// #include "PLMNidentity.h"
+// #include "TAC.h"
+// #include "TBCD-STRING.h"
 // #include <stdio.h>
 // #include <stdlib.h>
+//
+// // Extract TAI data from TAIItem structure 
+// typedef struct TAIData {
+//     uint8_t plmn[3];    // PLMN identity (3 bytes)
+//     uint16_t tac;       // TAC (2 bytes)
+//     int valid;          // 1 if extraction successful, 0 otherwise
+// } TAIData;
+//
+// TAIData extractTAIData(void* tai_item_ptr) {
+//     TAIData result = {0};
+//     if (!tai_item_ptr) return result;
+//     
+//     TAIItem_t* tai_item = (TAIItem_t*)tai_item_ptr;
+//     if (!tai_item) return result;
+//     
+//     // Extract PLMN identity
+//     if (tai_item->tAI.pLMNidentity.buf && tai_item->tAI.pLMNidentity.size >= 3) {
+//         memcpy(result.plmn, tai_item->tAI.pLMNidentity.buf, 3);
+//     }
+//     
+//     // Extract TAC
+//     if (tai_item->tAI.tAC.buf && tai_item->tAI.tAC.size >= 2) {
+//         result.tac = (tai_item->tAI.tAC.buf[0] << 8) | tai_item->tAI.tAC.buf[1];
+//     }
+//     
+//     result.valid = 1;
+//     return result;
+// }
+//
+// // Extract S-TMSI data from S_TMSI structure
+// typedef struct STMSIData {
+//     uint8_t mmec;       // MME Code
+//     uint32_t mtmsi;     // M-TMSI
+//     int valid;          // 1 if extraction successful, 0 otherwise
+// } STMSIData;
+//
+// STMSIData extractSTMSIData(void* stmsi_ptr) {
+//     STMSIData result = {0};
+//     if (!stmsi_ptr) return result;
+//     
+//     S_TMSI_t* stmsi = (S_TMSI_t*)stmsi_ptr;
+//     if (!stmsi) return result;
+//     
+//     // Extract MMEC
+//     if (stmsi->mMEC.buf && stmsi->mMEC.size >= 1) {
+//         result.mmec = stmsi->mMEC.buf[0];
+//     }
+//     
+//     // Extract M-TMSI (4 bytes)
+//     if (stmsi->m_TMSI.buf && stmsi->m_TMSI.size >= 4) {
+//         result.mtmsi = (stmsi->m_TMSI.buf[0] << 24) | 
+//                       (stmsi->m_TMSI.buf[1] << 16) | 
+//                       (stmsi->m_TMSI.buf[2] << 8) | 
+//                       stmsi->m_TMSI.buf[3];
+//     }
+//     
+//     result.valid = 1;
+//     return result;
+// }
 import "C"
 import (
 	"encoding/binary"
@@ -1619,7 +1687,212 @@ func extractDownlinkNASTransportIEs(packet unsafe.Pointer) []*InformationElement
 	return result
 }
 
-// Enhanced extraction functions for specific message types using tshark insights
+// Enhanced UEIdentityIndexValue extraction matching Wireshark format
+func extractDetailedUEIdentityIndexValue(bitString *C.BIT_STRING_t) (interface{}, string) {
+	if bitString.buf == nil || bitString.size == 0 {
+		return "Invalid", "Empty or null buffer"
+	}
+
+	data := C.GoBytes(unsafe.Pointer(bitString.buf), C.int(bitString.size))
+	hexStr := hex.EncodeToString(data)
+	
+	// UEIdentityIndexValue is 10 bits according to spec
+	// Wireshark format: "b140 [bit length 10, 6 LSB pad bits, 1011 0001  01.. .... decimal value 709]"
+	
+	if len(data) >= 2 {
+		// Extract full 16-bit value for bit manipulation
+		fullValue := binary.BigEndian.Uint16(data)
+		
+		// Extract 10 most significant bits (right shift by 6 to remove padding)
+		value := fullValue >> 6
+		
+		// Calculate padding bits (6 LSB pad bits for 10-bit value in 16-bit field)
+		padBits := 6
+		
+		// Format binary representation like Wireshark with proper bit masking
+		binaryFull := fmt.Sprintf("%016b", fullValue)
+		// Show the 10 significant bits and 6 padding bits: "1011 0001  01.. ...."
+		binaryFormatted := fmt.Sprintf("%s %s  %s %s", 
+			binaryFull[0:4], binaryFull[4:8], binaryFull[8:10]+"..", "....")
+		
+		rawValue := fmt.Sprintf("%s [bit length 10, %d LSB pad bits, %s decimal value %d]",
+			hexStr, padBits, binaryFormatted, value)
+		
+		return int(value), rawValue
+	} else if len(data) == 1 {
+		// Single byte case
+		fullValue := uint16(data[0]) << 8 // Shift to MSB position
+		value := fullValue >> 6           // Extract 10 bits
+		binaryFormatted := fmt.Sprintf("%08b", data[0])
+		
+		rawValue := fmt.Sprintf("%s [bit length 10, %s decimal value %d]", hexStr, binaryFormatted, value)
+		return int(value), rawValue
+	}
+	
+	return hexStr, "0x" + hexStr
+}
+
+// Enhanced Extended UEIdentityIndexValue extraction matching Wireshark format  
+func extractDetailedExtendedUEIdentityIndexValue(bitString *C.BIT_STRING_t) (interface{}, string) {
+	if bitString.buf == nil || bitString.size == 0 {
+		return "Invalid", "Empty or null buffer"
+	}
+
+	data := C.GoBytes(unsafe.Pointer(bitString.buf), C.int(bitString.size))
+	hexStr := hex.EncodeToString(data)
+	
+	// Extended UEIdentityIndexValue is 14 bits according to spec
+	// Wireshark format: "9b14 [bit length 14, 2 LSB pad bits, 1001 1011  0001 01.. decimal value 9925]"
+	
+	if len(data) >= 2 {
+		// Extract full 16-bit value for bit manipulation
+		fullValue := binary.BigEndian.Uint16(data)
+		
+		// Extract 14 most significant bits (right shift by 2 to remove padding)
+		value := fullValue >> 2
+		
+		// Calculate padding bits (2 LSB pad bits for 14-bit value in 16-bit field)
+		padBits := 2
+		
+		// Format binary representation like Wireshark with proper bit masking
+		binaryFull := fmt.Sprintf("%016b", fullValue)
+		// Show the 14 significant bits and 2 padding bits: "1001 1011  0001 01.."
+		binaryFormatted := fmt.Sprintf("%s %s  %s %s", 
+			binaryFull[0:4], binaryFull[4:8], binaryFull[8:12], binaryFull[12:14]+"..")
+		
+		rawValue := fmt.Sprintf("%s [bit length 14, %d LSB pad bits, %s decimal value %d]",
+			hexStr, padBits, binaryFormatted, value)
+		
+		return int(value), rawValue
+	} else if len(data) == 1 {
+		// Single byte case  
+		fullValue := uint16(data[0]) << 8 // Shift to MSB position
+		value := fullValue >> 2           // Extract 14 bits
+		binaryFormatted := fmt.Sprintf("%08b", data[0])
+		
+		rawValue := fmt.Sprintf("%s [bit length 14, %s decimal value %d]", hexStr, binaryFormatted, value)
+		return int(value), rawValue
+	}
+	
+	return hexStr, "0x" + hexStr
+}
+
+// Enhanced UEPagingID extraction matching Wireshark format
+func extractDetailedUEPagingID(pagingID *C.UEPagingID_t) (interface{}, string) {
+	switch pagingID.present {
+	case C.UEPagingID_PR_s_TMSI:
+		// Use C function to extract S-TMSI data safely
+		s_tmsi := *(**C.S_TMSI_t)(unsafe.Pointer(&pagingID.choice[0]))
+		if s_tmsi != nil {
+			stmsiData := C.extractSTMSIData(unsafe.Pointer(s_tmsi))
+			
+			if stmsiData.valid == 1 {
+				mmecValue := uint8(stmsiData.mmec)
+				mtmsiValue := uint32(stmsiData.mtmsi)
+				
+				// Format according to Wireshark: "UEPagingID: s-TMSI (0)" with detailed fields
+				value := "s-TMSI (0)"
+				rawValue := fmt.Sprintf("mMEC: %d (0x%02x), m-TMSI: %d (0x%08x)", 
+					mmecValue, mmecValue, mtmsiValue, mtmsiValue)
+				
+				return value, rawValue
+			}
+		}
+		return "s-TMSI (extraction failed)", "S-TMSI extraction failed"
+		
+	case C.UEPagingID_PR_iMSI:
+		// Extract IMSI with BCD decoding
+		imsi_ptr := (*C.IMSI_t)(unsafe.Pointer(&pagingID.choice[0]))
+		if imsi_ptr.buf != nil && imsi_ptr.size > 0 {
+			imsiData := C.GoBytes(unsafe.Pointer(imsi_ptr.buf), C.int(imsi_ptr.size))
+			imsiStr := decodeIMSI(imsiData)
+			value := "iMSI (1)"
+			rawValue := fmt.Sprintf("IMSI: %s", imsiStr)
+			return value, rawValue
+		} else {
+			return "iMSI(Invalid)", "Empty IMSI buffer"
+		}
+		
+	default:
+		return "Unknown", fmt.Sprintf("UEPagingID type %d", pagingID.present)
+	}
+}
+
+// Enhanced TAIList extraction matching Wireshark format
+func extractDetailedTAIList(taiList *C.TAIList_t) (interface{}, string) {
+	if taiList == nil || taiList.list.count == 0 {
+		return "Empty TAI List", "TAI List: empty"
+	}
+
+	count := int(taiList.list.count)
+	
+	// Get TAI Items from protocol container array
+	var taiContainers []*C.ProtocolIE_SingleContainer_8146P7_t
+	slice := (*reflect.SliceHeader)(unsafe.Pointer(&taiContainers))
+	slice.Cap = count
+	slice.Len = count
+	slice.Data = uintptr(unsafe.Pointer(taiList.list.array))
+
+	if len(taiContainers) > 0 && taiContainers[0] != nil {
+		// Get the first TAI item - TAIItemIEs has TAIItem in its choice
+		container := taiContainers[0]
+		// Cast to TAIItemIEs structure and access the TAIItem
+		taiItemPtr := (*C.TAIItem_t)(unsafe.Pointer(&container.value.choice))
+		if taiItemPtr != nil {
+			// Use C function to extract TAI data safely
+			taiData := C.extractTAIData(unsafe.Pointer(taiItemPtr))
+			
+			if taiData.valid == 1 {
+				// Decode PLMN identity from the 3 bytes
+				plmnBytes := C.GoBytes(unsafe.Pointer(&taiData.plmn[0]), 3)
+				plmnHex := hex.EncodeToString(plmnBytes)
+				mcc, mnc := decodePLMNIdentity(plmnBytes)
+				
+				// TAC value
+				tacValue := uint16(taiData.tac)
+				
+				// Format like Wireshark output
+				var value string
+				if count == 1 {
+					value = "1 item"
+				} else {
+					value = fmt.Sprintf("%d items", count)
+				}
+				
+				rawValue := fmt.Sprintf("Item 0: id-TAIItem - pLMNidentity: %s, Mobile Country Code (MCC): %s, Mobile Network Code (MNC): %s, tAC: %d (0x%04x)", 
+					plmnHex, getMCCDescription(mcc), getMNCDescription(mnc), tacValue, tacValue)
+				
+				return value, rawValue
+			}
+		}
+	}
+	
+	// Fallback if extraction failed
+	return fmt.Sprintf("TAI List (%d items)", count), "TAI List: extraction failed"
+}
+
+// Helper functions for MCC/MNC descriptions (matching Wireshark)
+func getMCCDescription(mcc string) string {
+	switch mcc {
+	case "605":
+		return "Tunisia (605)"
+	case "001":
+		return "Test (001)"
+	default:
+		return fmt.Sprintf("Unknown (%s)", mcc)
+	}
+}
+
+func getMNCDescription(mnc string) string {
+	switch mnc {
+	case "01":
+		return "Unknown (01)"
+	case "02":
+		return "Unknown (02)"
+	default:
+		return fmt.Sprintf("Unknown (%s)", mnc)
+	}
+}
 
 func extractPagingIEs(packet unsafe.Pointer) []*InformationElement {
 	log.Printf("DEBUG: Enhanced Paging IE extraction started")
@@ -1648,140 +1921,44 @@ func extractPagingIEs(packet unsafe.Pointer) []*InformationElement {
 
 		switch ie.id {
 		case C.ProtocolIE_ID_id_UEIdentityIndexValue:
-			// Extract UE Identity Index Value (10-bit value)
+			// Extract UE Identity Index Value with Wireshark-style formatting
 			bitString := (*C.BIT_STRING_t)(unsafe.Pointer(&ie.value.choice))
-			if bitString.buf != nil && bitString.size > 0 {
-				data := C.GoBytes(unsafe.Pointer(bitString.buf), C.int(bitString.size))
-				hexStr := hex.EncodeToString(data)
-				
-				// Calculate decimal value from 10-bit field
-				var value uint16 = 0
-				if len(data) >= 2 {
-					// Extract 10 bits (most significant bits of first two bytes)
-					value = (uint16(data[0]) << 2) | (uint16(data[1]) >> 6)
-					ieStruct.Value = value
-					ieStruct.RawValue = fmt.Sprintf("0x%s [decimal=%d, bits=%010b]", hexStr, value, value)
-				} else if len(data) == 1 {
-					value = uint16(data[0]) >> 6 // Only 2 bits if single byte
-					ieStruct.Value = value
-					ieStruct.RawValue = fmt.Sprintf("0x%s [decimal=%d]", hexStr, value)
-				} else {
-					ieStruct.Value = hexStr
-					ieStruct.RawValue = "0x" + hexStr
-				}
-				log.Printf("DEBUG: UEIdentityIndexValue - hex: %s, decimal: %d", hexStr, value)
-			} else {
-				ieStruct.Value = "Invalid"
-				ieStruct.RawValue = "Empty or null buffer"
-			}
+			value, rawValue := extractDetailedUEIdentityIndexValue(bitString)
+			ieStruct.Value = value
+			ieStruct.RawValue = rawValue
+			log.Printf("DEBUG: UEIdentityIndexValue - value: %v", value)
 
 		case C.ProtocolIE_ID_id_UEPagingID:
-			// Extract UE Paging ID (S-TMSI or IMSI) with detailed decoding
+			// Extract UE Paging ID with Wireshark-style formatting
 			pagingID := (*C.UEPagingID_t)(unsafe.Pointer(&ie.value.choice))
-			switch pagingID.present {
-			case C.UEPagingID_PR_s_TMSI:
-				// Extract S-TMSI with detailed MMEC and M-TMSI decoding
-				// Note: In UEPagingID, s_TMSI is a pointer unlike in InitialUEMessage
-				// Dereference the pointer to get the actual S-TMSI structure
-				s_tmsi := *(**C.S_TMSI_t)(unsafe.Pointer(&pagingID.choice[0]))
-				if s_tmsi != nil {
-					mmecHex := extractGenericOctetString(&s_tmsi.mMEC)
-					mtmsiHex := extractGenericOctetString(&s_tmsi.m_TMSI)
-					
-					// Handle potential empty data
-					var mmecStr, mtmsiStr string
-					if len(mmecHex) >= 2 {
-						mmecStr = mmecHex[:2]
-					} else {
-						mmecStr = mmecHex
-					}
-					if len(mtmsiHex) >= 11 { // "xx xx xx xx" format = 11 chars
-						mtmsiStr = mtmsiHex[:11]
-					} else {
-						mtmsiStr = mtmsiHex
-					}
-					
-					ieStruct.Value = fmt.Sprintf("S_TMSI(MMEC:%s, M-TMSI:%s)", mmecStr, mtmsiStr)
-					ieStruct.RawValue = mmecHex + " " + mtmsiHex
-					log.Printf("DEBUG: UEPagingID - S-TMSI decoded: MMEC=%s, M-TMSI=%s", mmecStr, mtmsiStr)
-				} else {
-					ieStruct.Value = "S-TMSI(null)"
-					ieStruct.RawValue = "S-TMSI pointer is null"
-					log.Printf("DEBUG: UEPagingID - S-TMSI pointer is null")
-				}
-			case C.UEPagingID_PR_iMSI:
-				// Extract IMSI with BCD decoding
-				imsi_ptr := (*C.IMSI_t)(unsafe.Pointer(&pagingID.choice[0]))
-				if imsi_ptr.buf != nil && imsi_ptr.size > 0 {
-					imsiData := C.GoBytes(unsafe.Pointer(imsi_ptr.buf), C.int(imsi_ptr.size))
-					imsiStr := decodeIMSI(imsiData)
-					ieStruct.Value = fmt.Sprintf("IMSI(%s)", imsiStr)
-					ieStruct.RawValue = hex.EncodeToString(imsiData)
-					log.Printf("DEBUG: UEPagingID - IMSI decoded: %s", imsiStr)
-				} else {
-					ieStruct.Value = "IMSI(Invalid)"
-					ieStruct.RawValue = "Empty IMSI buffer"
-				}
-			default:
-				ieStruct.Value = "Unknown"
-				ieStruct.RawValue = fmt.Sprintf("UEPagingID type %d", pagingID.present)
-			}
+			value, rawValue := extractDetailedUEPagingID(pagingID)
+			ieStruct.Value = value
+			ieStruct.RawValue = rawValue
+			log.Printf("DEBUG: UEPagingID - value: %v", value)
 
 		case C.ProtocolIE_ID_id_CNDomain:
-			// Extract CN Domain
+			// Extract CN Domain with Wireshark-style formatting
 			cnDomain := (*C.CNDomain_t)(unsafe.Pointer(&ie.value.choice))
-			domainStr := "Unknown"
+			var domainStr string
 			switch *cnDomain {
 			case C.CNDomain_ps:
-				domainStr = "PS (Packet Switched)"
+				domainStr = "ps (0)"
 			case C.CNDomain_cs:
-				domainStr = "CS (Circuit Switched)"
+				domainStr = "cs (1)"
 			default:
-				domainStr = fmt.Sprintf("Unknown (%d)", int(*cnDomain))
+				domainStr = fmt.Sprintf("unknown (%d)", int(*cnDomain))
 			}
 			ieStruct.Value = domainStr
 			ieStruct.RawValue = fmt.Sprintf("%d", int(*cnDomain))
 			log.Printf("DEBUG: CNDomain: %s", domainStr)
 
 		case C.ProtocolIE_ID_id_TAIList:
-			// Extract TAI List with detailed parsing
+			// Extract TAI List with Wireshark-style formatting
 			taiList := (*C.TAIList_t)(unsafe.Pointer(&ie.value.choice))
-			if taiList.list.count > 0 {
-				var taiDetails []string
-				var tais []*C.TAIItem_t
-				slice := (*reflect.SliceHeader)((unsafe.Pointer(&tais)))
-				slice.Cap = (int)(taiList.list.count)
-				slice.Len = (int)(taiList.list.count)
-				slice.Data = uintptr(unsafe.Pointer(taiList.list.array))
-
-				for i, tai := range tais {
-					var mcc, mnc, tac string
-					
-					// Extract PLMN identity
-					if tai.tAI.pLMNidentity.buf != nil && tai.tAI.pLMNidentity.size >= 3 {
-						plmnData := C.GoBytes(unsafe.Pointer(tai.tAI.pLMNidentity.buf), C.int(tai.tAI.pLMNidentity.size))
-						mcc, mnc = decodePLMNIdentity(plmnData[:3])
-					}
-					
-					// Extract TAC
-					if tai.tAI.tAC.buf != nil && tai.tAI.tAC.size >= 2 {
-						tacData := C.GoBytes(unsafe.Pointer(tai.tAI.tAC.buf), C.int(tai.tAI.tAC.size))
-						if len(tacData) >= 2 {
-							tacValue := binary.BigEndian.Uint16(tacData)
-							tac = fmt.Sprintf("%d (0x%04x)", tacValue, tacValue)
-						}
-					}
-					
-					taiDetails = append(taiDetails, fmt.Sprintf("TAI[%d]: MCC=%s, MNC=%s, TAC=%s", i, mcc, mnc, tac))
-				}
-				
-				ieStruct.Value = fmt.Sprintf("TAI List (%d items)", len(tais))
-				ieStruct.RawValue = fmt.Sprintf("TAI List: %s", fmt.Sprintf("[%s]", fmt.Sprintf("%v", taiDetails)))
-				log.Printf("DEBUG: TAIList: %d items - %v", len(tais), taiDetails)
-			} else {
-				ieStruct.Value = "Empty TAI List"
-				ieStruct.RawValue = "TAI List: empty"
-			}
+			value, rawValue := extractDetailedTAIList(taiList)
+			ieStruct.Value = value
+			ieStruct.RawValue = rawValue
+			log.Printf("DEBUG: TAIList - value: %v", value)
 
 		case C.ProtocolIE_ID_id_pagingDRX:
 			// Extract Paging DRX
@@ -1830,32 +2007,12 @@ func extractPagingIEs(packet unsafe.Pointer) []*InformationElement {
 			ieStruct.RawValue = fmt.Sprintf("%d", int(*priority))
 
 		case 231: // C.ProtocolIE_ID_id_extended_UEIdentityIndexValue
-			// Extract Extended UE Identity Index Value (14-bit value for NB-IoT)
+			// Extract Extended UE Identity Index Value with Wireshark-style formatting  
 			bitString := (*C.BIT_STRING_t)(unsafe.Pointer(&ie.value.choice))
-			if bitString.buf != nil && bitString.size > 0 {
-				data := C.GoBytes(unsafe.Pointer(bitString.buf), C.int(bitString.size))
-				hexStr := hex.EncodeToString(data)
-				
-				// Calculate decimal value from 14-bit field for NB-IoT
-				var value uint16 = 0
-				if len(data) >= 2 {
-					// Extract 14 bits from the data
-					value = (uint16(data[0]) << 6) | (uint16(data[1]) >> 2)
-					ieStruct.Value = value
-					ieStruct.RawValue = fmt.Sprintf("0x%s [decimal=%d, bits=%014b]", hexStr, value, value)
-				} else if len(data) == 1 {
-					value = uint16(data[0]) >> 2 // Only 6 bits if single byte
-					ieStruct.Value = value
-					ieStruct.RawValue = fmt.Sprintf("0x%s [decimal=%d]", hexStr, value)
-				} else {
-					ieStruct.Value = hexStr
-					ieStruct.RawValue = "0x" + hexStr
-				}
-				log.Printf("DEBUG: Extended UEIdentityIndexValue - hex: %s, decimal: %d (14-bit)", hexStr, value)
-			} else {
-				ieStruct.Value = "Invalid"
-				ieStruct.RawValue = "Empty or null buffer"
-			}
+			value, rawValue := extractDetailedExtendedUEIdentityIndexValue(bitString)
+			ieStruct.Value = value
+			ieStruct.RawValue = rawValue
+			log.Printf("DEBUG: Extended UEIdentityIndexValue - value: %v", value)
 
 		case C.ProtocolIE_ID_id_Paging_eDRXInformation:
 			// Extract Paging eDRX Information
