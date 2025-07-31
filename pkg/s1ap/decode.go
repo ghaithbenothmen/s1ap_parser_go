@@ -26,8 +26,11 @@ package s1ap
 // #include "LocationReportingControl.h"
 // #include "LocationReportingFailureIndication.h"
 // #include "LocationReport.h"
+// #include "UECapabilityInfoIndication.h"
+// #include "UERadioCapability.h"
 // #include "TransportLayerAddress.h"
 // #include "PrivacyIndicator.h"
+// #include "UECapabilityInfoIndication.h"
 // #include <stdio.h>
 // #include <stdlib.h>
 import "C"
@@ -41,6 +44,14 @@ import (
 	"strings"
 	"unsafe"
 )
+
+// min helper function
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
 
 var S1AP_PDU2StringMap = map[C.S1AP_PDU_PR]string{
 	C.S1AP_PDU_PR_NOTHING:             "Nothing",
@@ -847,6 +858,18 @@ func extractInitiatingMessageIEs(packet unsafe.Pointer, messageType int, procCod
 		return ies
 	}
 	
+	if procCode == 22 { // UECapabilityInfoIndication procedure code
+		log.Printf("DEBUG: Detected UECapabilityInfoIndication via procedure code 22 - calling extractUECapabilityInfoIndicationIEs")
+		ies = extractUECapabilityInfoIndicationIEs(packet)
+		return ies
+	}
+	
+	if procCode == 21 { // UEContextModification procedure code
+		log.Printf("DEBUG: Detected UEContextModificationRequest via procedure code 21 - calling extractUEContextModificationRequestIEs")
+		ies = extractUEContextModificationRequestIEs(packet)
+		return ies
+	}
+	
 	switch msg.value.present {
 	case C.InitiatingMessage__value_PR_InitialUEMessage:
 		log.Printf("DEBUG: Detected InitialUEMessage - calling extractInitialUEMessageIEs")
@@ -887,6 +910,12 @@ func extractInitiatingMessageIEs(packet unsafe.Pointer, messageType int, procCod
 		ies = extractLocationReportIEs(packet)
 	case C.InitiatingMessage__value_PR_UEContextReleaseRequest:
 		ies = extractUEContextReleaseRequestIEs(packet)
+	case C.InitiatingMessage__value_PR_UEContextModificationRequest:
+		log.Printf("DEBUG: Detected UEContextModificationRequest - calling extractUEContextModificationRequestIEs")
+		ies = extractUEContextModificationRequestIEs(packet)
+	case C.InitiatingMessage__value_PR_UEContextModificationIndication:
+		log.Printf("DEBUG: Detected UEContextModificationIndication - calling extractUEContextModificationIndicationIEs")
+		ies = extractUEContextModificationIndicationIEs(packet)
 	case C.InitiatingMessage__value_PR_E_RABSetupRequest:
 		ies = extractERABSetupRequestIEs(packet)
 	case C.InitiatingMessage__value_PR_InitialContextSetupRequest:
@@ -901,6 +930,7 @@ func extractInitiatingMessageIEs(packet unsafe.Pointer, messageType int, procCod
 	case C.InitiatingMessage__value_PR_HandoverRequired:
 		ies = extractHandoverRequiredIEs(packet)
 	case C.InitiatingMessage__value_PR_UECapabilityInfoIndication:
+		log.Printf("DEBUG: Detected UECapabilityInfoIndication - calling extractUECapabilityInfoIndicationIEs")
 		ies = extractUECapabilityInfoIndicationIEs(packet)
 	default:
 		// For unsupported message types, try enhanced extraction
@@ -925,6 +955,15 @@ func extractSuccessfulOutcomeIEs(packet unsafe.Pointer, messageType int) []*Info
 
 	// Use procedure code to determine message type since the ASN.1 constants may not be available
 	switch msg.procedureCode {
+	case 3: // PathSwitchRequest
+		log.Printf("DEBUG: Calling extractPathSwitchRequestAcknowledgeIEs for procedure code 3")
+		ies = extractPathSwitchRequestAcknowledgeIEs(packet)
+	case 21: // UEContextModification
+		log.Printf("DEBUG: Calling extractUEContextModificationResponseIEs for procedure code 21")
+		ies = extractUEContextModificationResponseIEs(packet)
+	case 26: // UEContextModificationConfirm
+		log.Printf("DEBUG: Calling extractUEContextModificationConfirmIEs for procedure code 26")
+		ies = extractUEContextModificationConfirmIEs(packet)
 	case 23: // UEContextRelease
 		log.Printf("DEBUG: Calling extractUEContextReleaseCompleteIEs for procedure code 23")
 		ies = extractUEContextReleaseCompleteIEs(packet)
@@ -934,8 +973,6 @@ func extractSuccessfulOutcomeIEs(packet unsafe.Pointer, messageType int) []*Info
 		ies = extractS1SetupResponseIEs(packet)
 	case 9: // InitialContextSetup
 		ies = extractInitialContextSetupResponseIEs(packet)
-	case 25: // UEContextModification
-		ies = extractUEContextModificationResponseIEs(packet)
 	case 0: // HandoverPreparation
 		ies = extractHandoverCommandIEs(packet)
 	default:
@@ -2697,11 +2734,182 @@ func extractHandoverRequiredIEs(packet unsafe.Pointer) []*InformationElement {
 }
 
 func extractUECapabilityInfoIndicationIEs(packet unsafe.Pointer) []*InformationElement {
-	return extractGenericIEs(packet, 22) // UECapabilityInfoIndication
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.InitiatingMessage_t)(unsafe.Pointer(&pdu.choice))
+	val := (*C.UECapabilityInfoIndication_t)(unsafe.Pointer(&msg.value.choice))
+
+	if val == nil {
+		log.Printf("DEBUG: UECapabilityInfoIndication message is nil")
+		return nil
+	}
+
+	protocolIEs := &val.protocolIEs
+	log.Printf("DEBUG: UECapabilityInfoIndication extracting IEs, protocolIEs.list.count: %d", int(protocolIEs.list.count))
+
+	ieSlice := (*[1000]*C.UECapabilityInfoIndicationIEs_t)(unsafe.Pointer(protocolIEs.list.array))[:int(protocolIEs.list.count):int(protocolIEs.list.count)]
+	log.Printf("DEBUG: UECapabilityInfoIndication got %d IEs in slice", len(ieSlice))
+
+	var result []*InformationElement
+
+	for i, ie := range ieSlice {
+		if ie == nil {
+			log.Printf("DEBUG: UECapabilityInfoIndication IE[%d] is nil, skipping", i)
+			continue
+		}
+
+		ieStruct := &InformationElement{
+			ID:          int(ie.id),
+			Name:        GetIEName(int(ie.id)),
+			Criticality: getCriticalityString(int(ie.criticality)),
+		}
+
+		log.Printf("DEBUG: UECapabilityInfoIndication IE[%d] - ID: %d, Name: %s, Present: %d", i, ie.id, ieStruct.Name, ie.value.present)
+
+		switch int(ie.id) {
+		case 0: // id_MME_UE_S1AP_ID
+			if ie.value.present == C.UECapabilityInfoIndicationIEs__value_PR_MME_UE_S1AP_ID {
+				mmeUeS1apId := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice[0]))
+				ieStruct.Value = int(*mmeUeS1apId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *mmeUeS1apId)
+				log.Printf("DEBUG: UECapabilityInfoIndication extracted MME_UE_S1AP_ID: %d", *mmeUeS1apId)
+			} else {
+				log.Printf("DEBUG: UECapabilityInfoIndication IE[%d] present type mismatch for MME_UE_S1AP_ID: expected %d, got %d", 
+					i, C.UECapabilityInfoIndicationIEs__value_PR_MME_UE_S1AP_ID, ie.value.present)
+				ieStruct.Value = "Present type mismatch"
+				ieStruct.RawValue = fmt.Sprintf("expected=%d got=%d", C.UECapabilityInfoIndicationIEs__value_PR_MME_UE_S1AP_ID, ie.value.present)
+			}
+
+		case 8: // id_eNB_UE_S1AP_ID  
+			if ie.value.present == C.UECapabilityInfoIndicationIEs__value_PR_ENB_UE_S1AP_ID {
+				enbUeS1apId := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice[0]))
+				ieStruct.Value = int(*enbUeS1apId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *enbUeS1apId)
+				log.Printf("DEBUG: UECapabilityInfoIndication extracted eNB_UE_S1AP_ID: %d", *enbUeS1apId)
+			} else {
+				log.Printf("DEBUG: UECapabilityInfoIndication IE[%d] present type mismatch for eNB_UE_S1AP_ID: expected %d, got %d", 
+					i, C.UECapabilityInfoIndicationIEs__value_PR_ENB_UE_S1AP_ID, ie.value.present)
+				ieStruct.Value = "Present type mismatch"
+				ieStruct.RawValue = fmt.Sprintf("expected=%d got=%d", C.UECapabilityInfoIndicationIEs__value_PR_ENB_UE_S1AP_ID, ie.value.present)
+			}
+
+		case 74: // id_UERadioCapability
+			if ie.value.present == C.UECapabilityInfoIndicationIEs__value_PR_UERadioCapability {
+				ueRadioCapability := (*C.UERadioCapability_t)(unsafe.Pointer(&ie.value.choice[0]))
+				capabilitySize := int(ueRadioCapability.size)
+				
+				// Extract hex representation of the capability data
+				capabilityData := C.GoBytes(unsafe.Pointer(ueRadioCapability.buf), C.int(capabilitySize))
+				capabilityHex := fmt.Sprintf("%x", capabilityData)
+				
+				ieStruct.Value = fmt.Sprintf("UERadioCapability(%d bytes)", capabilitySize)
+				ieStruct.RawValue = fmt.Sprintf("%s", capabilityHex)
+				
+				log.Printf("DEBUG: UECapabilityInfoIndication extracted UERadioCapability: %d bytes, hex: %s...", 
+					capabilitySize, capabilityHex[:min(len(capabilityHex), 100)])
+			} else {
+				log.Printf("DEBUG: UECapabilityInfoIndication IE[%d] present type mismatch for UERadioCapability: expected %d, got %d", 
+					i, C.UECapabilityInfoIndicationIEs__value_PR_UERadioCapability, ie.value.present)
+				ieStruct.Value = "Present type mismatch"
+				ieStruct.RawValue = fmt.Sprintf("expected=%d got=%d", C.UECapabilityInfoIndicationIEs__value_PR_UERadioCapability, ie.value.present)
+			}
+
+		default:
+			// For unsupported IEs, show basic information
+			ieStruct.Value = fmt.Sprintf("Unsupported IE (present: %d)", ie.value.present)
+			ieStruct.RawValue = fmt.Sprintf("id=%d present=%d", ie.id, ie.value.present)
+			log.Printf("DEBUG: UECapabilityInfoIndication unsupported IE - ID: %d, Present: %d", ie.id, ie.value.present)
+		}
+
+		result = append(result, ieStruct)
+	}
+
+	log.Printf("DEBUG: UECapabilityInfoIndication extraction completed with %d IEs", len(result))
+	return result
 }
 
 func extractUEContextModificationResponseIEs(packet unsafe.Pointer) []*InformationElement {
-	return extractGenericIEs(packet, 25) // UEContextModificationResponse
+	var result []*InformationElement
+
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.SuccessfulOutcome_t)(unsafe.Pointer(&pdu.choice))
+	val := (*C.UEContextModificationResponse_t)(unsafe.Pointer(&msg.value.choice))
+
+	log.Printf("DEBUG: UEContextModificationResponse extracting IEs, protocolIEs.list.count: %d", val.protocolIEs.list.count)
+
+	var ies []*C.UEContextModificationResponseIEs_t
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
+	slice.Cap = (int)(val.protocolIEs.list.count)
+	slice.Len = (int)(val.protocolIEs.list.count)
+	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+
+	log.Printf("DEBUG: UEContextModificationResponse got %d IEs in slice", len(ies))
+
+	for i, ie := range ies {
+		if ie == nil {
+			log.Printf("DEBUG: UEContextModificationResponse IE[%d] is nil, skipping", i)
+			continue
+		}
+
+		ieStruct := &InformationElement{
+			ID:          int(ie.id),
+			Name:        GetIEName(int(ie.id)),
+			Criticality: getCriticalityString(int(ie.criticality)),
+		}
+
+		log.Printf("DEBUG: UEContextModificationResponse IE[%d] - ID: %d, Name: %s, Present: %d", i, ie.id, ieStruct.Name, ie.value.present)
+
+		// Extract value based on ID and present type
+		switch int(ie.id) {
+		case 0: // id_MME_UE_S1AP_ID
+			if ie.value.present == C.UEContextModificationResponseIEs__value_PR_MME_UE_S1AP_ID {
+				mmeUeS1apId := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice[0]))
+				ieStruct.Value = int(*mmeUeS1apId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *mmeUeS1apId)
+				log.Printf("DEBUG: UEContextModificationResponse extracted MME_UE_S1AP_ID: %d", *mmeUeS1apId)
+			} else {
+				log.Printf("DEBUG: UEContextModificationResponse IE[%d] present type mismatch for MME_UE_S1AP_ID: expected %d, got %d", 
+					i, C.UEContextModificationResponseIEs__value_PR_MME_UE_S1AP_ID, ie.value.present)
+				ieStruct.Value = "Present type mismatch"
+				ieStruct.RawValue = fmt.Sprintf("expected=%d got=%d", C.UEContextModificationResponseIEs__value_PR_MME_UE_S1AP_ID, ie.value.present)
+			}
+
+		case 8: // id_eNB_UE_S1AP_ID  
+			if ie.value.present == C.UEContextModificationResponseIEs__value_PR_ENB_UE_S1AP_ID {
+				enbUeS1apId := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice[0]))
+				ieStruct.Value = int(*enbUeS1apId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *enbUeS1apId)
+				log.Printf("DEBUG: UEContextModificationResponse extracted eNB_UE_S1AP_ID: %d", *enbUeS1apId)
+			} else {
+				log.Printf("DEBUG: UEContextModificationResponse IE[%d] present type mismatch for eNB_UE_S1AP_ID: expected %d, got %d", 
+					i, C.UEContextModificationResponseIEs__value_PR_ENB_UE_S1AP_ID, ie.value.present)
+				ieStruct.Value = "Present type mismatch"
+				ieStruct.RawValue = fmt.Sprintf("expected=%d got=%d", C.UEContextModificationResponseIEs__value_PR_ENB_UE_S1AP_ID, ie.value.present)
+			}
+
+		case 58: // id_CriticalityDiagnostics
+			if ie.value.present == C.UEContextModificationResponseIEs__value_PR_CriticalityDiagnostics {
+				ieStruct.Value = "CriticalityDiagnostics (complex structure)"
+				ieStruct.RawValue = "criticalityDiagnostics=present"
+				log.Printf("DEBUG: UEContextModificationResponse extracted CriticalityDiagnostics")
+			} else {
+				log.Printf("DEBUG: UEContextModificationResponse IE[%d] present type mismatch for CriticalityDiagnostics: expected %d, got %d", 
+					i, C.UEContextModificationResponseIEs__value_PR_CriticalityDiagnostics, ie.value.present)
+				ieStruct.Value = "Present type mismatch"
+				ieStruct.RawValue = fmt.Sprintf("expected=%d got=%d", C.UEContextModificationResponseIEs__value_PR_CriticalityDiagnostics, ie.value.present)
+			}
+
+		default:
+			// For unsupported IEs, show basic information
+			ieStruct.Value = fmt.Sprintf("Unsupported IE (present: %d)", ie.value.present)
+			ieStruct.RawValue = fmt.Sprintf("id=%d present=%d", ie.id, ie.value.present)
+			log.Printf("DEBUG: UEContextModificationResponse unsupported IE - ID: %d, Present: %d", ie.id, ie.value.present)
+		}
+
+		result = append(result, ieStruct)
+	}
+
+	log.Printf("DEBUG: UEContextModificationResponse extraction completed with %d IEs", len(result))
+	return result
 }
 
 func extractS1SetupResponseIEs(packet unsafe.Pointer) []*InformationElement {
@@ -2828,7 +3036,100 @@ func createFallbackUEContextReleaseCompleteIEs() []*InformationElement {
 }
 
 func extractUEContextModificationFailureIEs(packet unsafe.Pointer) []*InformationElement {
-	return extractGenericIEs(packet, 26) // UEContextModificationFailure
+	var result []*InformationElement
+
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.UnsuccessfulOutcome_t)(unsafe.Pointer(&pdu.choice))
+	val := (*C.UEContextModificationFailure_t)(unsafe.Pointer(&msg.value.choice))
+
+	log.Printf("DEBUG: UEContextModificationFailure extracting IEs, protocolIEs.list.count: %d", val.protocolIEs.list.count)
+
+	var ies []*C.UEContextModificationFailureIEs_t
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
+	slice.Cap = (int)(val.protocolIEs.list.count)
+	slice.Len = (int)(val.protocolIEs.list.count)
+	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+
+	log.Printf("DEBUG: UEContextModificationFailure got %d IEs in slice", len(ies))
+
+	for i, ie := range ies {
+		if ie == nil {
+			log.Printf("DEBUG: UEContextModificationFailure IE[%d] is nil, skipping", i)
+			continue
+		}
+
+		ieStruct := &InformationElement{
+			ID:          int(ie.id),
+			Name:        GetIEName(int(ie.id)),
+			Criticality: getCriticalityString(int(ie.criticality)),
+		}
+
+		log.Printf("DEBUG: UEContextModificationFailure IE[%d] - ID: %d, Name: %s, Present: %d", i, ie.id, ieStruct.Name, ie.value.present)
+
+		// Extract value based on ID and present type
+		switch int(ie.id) {
+		case 0: // id_MME_UE_S1AP_ID
+			if ie.value.present == C.UEContextModificationFailureIEs__value_PR_MME_UE_S1AP_ID {
+				mmeUeS1apId := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice[0]))
+				ieStruct.Value = int(*mmeUeS1apId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *mmeUeS1apId)
+				log.Printf("DEBUG: UEContextModificationFailure extracted MME_UE_S1AP_ID: %d", *mmeUeS1apId)
+			} else {
+				log.Printf("DEBUG: UEContextModificationFailure IE[%d] present type mismatch for MME_UE_S1AP_ID: expected %d, got %d", 
+					i, C.UEContextModificationFailureIEs__value_PR_MME_UE_S1AP_ID, ie.value.present)
+				ieStruct.Value = "Present type mismatch"
+				ieStruct.RawValue = fmt.Sprintf("expected=%d got=%d", C.UEContextModificationFailureIEs__value_PR_MME_UE_S1AP_ID, ie.value.present)
+			}
+
+		case 8: // id_eNB_UE_S1AP_ID  
+			if ie.value.present == C.UEContextModificationFailureIEs__value_PR_ENB_UE_S1AP_ID {
+				enbUeS1apId := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice[0]))
+				ieStruct.Value = int(*enbUeS1apId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *enbUeS1apId)
+				log.Printf("DEBUG: UEContextModificationFailure extracted eNB_UE_S1AP_ID: %d", *enbUeS1apId)
+			} else {
+				log.Printf("DEBUG: UEContextModificationFailure IE[%d] present type mismatch for eNB_UE_S1AP_ID: expected %d, got %d", 
+					i, C.UEContextModificationFailureIEs__value_PR_ENB_UE_S1AP_ID, ie.value.present)
+				ieStruct.Value = "Present type mismatch"
+				ieStruct.RawValue = fmt.Sprintf("expected=%d got=%d", C.UEContextModificationFailureIEs__value_PR_ENB_UE_S1AP_ID, ie.value.present)
+			}
+
+		case 2: // id_Cause
+			if ie.value.present == C.UEContextModificationFailureIEs__value_PR_Cause {
+				ieStruct.Value = "Cause (complex structure)"
+				ieStruct.RawValue = "cause=present"
+				log.Printf("DEBUG: UEContextModificationFailure extracted Cause")
+			} else {
+				log.Printf("DEBUG: UEContextModificationFailure IE[%d] present type mismatch for Cause: expected %d, got %d", 
+					i, C.UEContextModificationFailureIEs__value_PR_Cause, ie.value.present)
+				ieStruct.Value = "Present type mismatch"
+				ieStruct.RawValue = fmt.Sprintf("expected=%d got=%d", C.UEContextModificationFailureIEs__value_PR_Cause, ie.value.present)
+			}
+
+		case 58: // id_CriticalityDiagnostics
+			if ie.value.present == C.UEContextModificationFailureIEs__value_PR_CriticalityDiagnostics {
+				ieStruct.Value = "CriticalityDiagnostics (complex structure)"
+				ieStruct.RawValue = "criticalityDiagnostics=present"
+				log.Printf("DEBUG: UEContextModificationFailure extracted CriticalityDiagnostics")
+			} else {
+				log.Printf("DEBUG: UEContextModificationFailure IE[%d] present type mismatch for CriticalityDiagnostics: expected %d, got %d", 
+					i, C.UEContextModificationFailureIEs__value_PR_CriticalityDiagnostics, ie.value.present)
+				ieStruct.Value = "Present type mismatch"
+				ieStruct.RawValue = fmt.Sprintf("expected=%d got=%d", C.UEContextModificationFailureIEs__value_PR_CriticalityDiagnostics, ie.value.present)
+			}
+
+		default:
+			// For unsupported IEs, show basic information
+			ieStruct.Value = fmt.Sprintf("Unsupported IE (present: %d)", ie.value.present)
+			ieStruct.RawValue = fmt.Sprintf("id=%d present=%d", ie.id, ie.value.present)
+			log.Printf("DEBUG: UEContextModificationFailure unsupported IE - ID: %d, Present: %d", ie.id, ie.value.present)
+		}
+
+		result = append(result, ieStruct)
+	}
+
+	log.Printf("DEBUG: UEContextModificationFailure extraction completed with %d IEs", len(result))
+	return result
 }
 
 func extractS1SetupFailureIEs(packet unsafe.Pointer) []*InformationElement {
@@ -3111,4 +3412,446 @@ func extractRRCEstablishmentCause(cause_ptr unsafe.Pointer) (string, string) {
 	rawValue := fmt.Sprintf("cause=%d", *cause)
 
 	return value, rawValue
+}
+
+// Helper function to extract IEs from UEContextModificationRequest
+func extractUEContextModificationRequestIEs(packet unsafe.Pointer) []*InformationElement {
+	var result []*InformationElement
+
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.InitiatingMessage_t)(unsafe.Pointer(&pdu.choice))
+	val := (*C.UEContextModificationRequest_t)(unsafe.Pointer(&msg.value.choice))
+
+	log.Printf("DEBUG: UEContextModificationRequest extracting IEs, protocolIEs.list.count: %d", val.protocolIEs.list.count)
+
+	var ies []*C.UEContextModificationRequestIEs_t
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
+	slice.Cap = (int)(val.protocolIEs.list.count)
+	slice.Len = (int)(val.protocolIEs.list.count)
+	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+
+	log.Printf("DEBUG: UEContextModificationRequest got %d IEs in slice", len(ies))
+
+	for i, ie := range ies {
+		if ie == nil {
+			log.Printf("DEBUG: UEContextModificationRequest IE[%d] is nil, skipping", i)
+			continue
+		}
+
+		ieStruct := &InformationElement{
+			ID:          int(ie.id),
+			Name:        GetIEName(int(ie.id)),
+			Criticality: getCriticalityString(int(ie.criticality)),
+		}
+
+		log.Printf("DEBUG: UEContextModificationRequest IE[%d] - ID: %d, Name: %s, Present: %d", i, ie.id, ieStruct.Name, ie.value.present)
+
+		// Extract value based on ID and present type
+		switch int(ie.id) {
+		case 0: // id_MME_UE_S1AP_ID
+			if ie.value.present == C.UEContextModificationRequestIEs__value_PR_MME_UE_S1AP_ID {
+				mmeUeS1apId := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice[0]))
+				ieStruct.Value = int(*mmeUeS1apId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *mmeUeS1apId)
+				log.Printf("DEBUG: UEContextModificationRequest extracted MME_UE_S1AP_ID: %d", *mmeUeS1apId)
+			} else {
+				log.Printf("DEBUG: UEContextModificationRequest IE[%d] present type mismatch for MME_UE_S1AP_ID: expected %d, got %d", 
+					i, C.UEContextModificationRequestIEs__value_PR_MME_UE_S1AP_ID, ie.value.present)
+				ieStruct.Value = "Present type mismatch"
+				ieStruct.RawValue = fmt.Sprintf("expected=%d got=%d", C.UEContextModificationRequestIEs__value_PR_MME_UE_S1AP_ID, ie.value.present)
+			}
+
+		case 8: // id_eNB_UE_S1AP_ID  
+			if ie.value.present == C.UEContextModificationRequestIEs__value_PR_ENB_UE_S1AP_ID {
+				enbUeS1apId := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice[0]))
+				ieStruct.Value = int(*enbUeS1apId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *enbUeS1apId)
+				log.Printf("DEBUG: UEContextModificationRequest extracted eNB_UE_S1AP_ID: %d", *enbUeS1apId)
+			} else {
+				log.Printf("DEBUG: UEContextModificationRequest IE[%d] present type mismatch for eNB_UE_S1AP_ID: expected %d, got %d", 
+					i, C.UEContextModificationRequestIEs__value_PR_ENB_UE_S1AP_ID, ie.value.present)
+				ieStruct.Value = "Present type mismatch"
+				ieStruct.RawValue = fmt.Sprintf("expected=%d got=%d", C.UEContextModificationRequestIEs__value_PR_ENB_UE_S1AP_ID, ie.value.present)
+			}
+
+		case 107: // id_SecurityKey
+			if ie.value.present == C.UEContextModificationRequestIEs__value_PR_SecurityKey {
+				securityKey := (*C.SecurityKey_t)(unsafe.Pointer(&ie.value.choice[0]))
+				keyBytes := C.GoBytes(unsafe.Pointer(securityKey.buf), C.int(securityKey.size))
+				keyHex := fmt.Sprintf("%x", keyBytes)
+				bitLength := int(securityKey.bits_unused)
+				totalBits := (int(securityKey.size) * 8) - bitLength
+				
+				ieStruct.Value = fmt.Sprintf("SecurityKey: %s [bit length %d]", keyHex, totalBits)
+				ieStruct.RawValue = fmt.Sprintf("key=%s bits=%d", keyHex, totalBits)
+				log.Printf("DEBUG: UEContextModificationRequest extracted SecurityKey: %s [%d bits]", keyHex, totalBits)
+			} else {
+				log.Printf("DEBUG: UEContextModificationRequest IE[%d] present type mismatch for SecurityKey: expected %d, got %d", 
+					i, C.UEContextModificationRequestIEs__value_PR_SecurityKey, ie.value.present)
+				ieStruct.Value = "Present type mismatch"
+				ieStruct.RawValue = fmt.Sprintf("expected=%d got=%d", C.UEContextModificationRequestIEs__value_PR_SecurityKey, ie.value.present)
+			}
+
+		case 66: // id_uEaggregateMaximumBitrate
+			if ie.value.present == C.UEContextModificationRequestIEs__value_PR_UEAggregateMaximumBitrate {
+				ueAggBitrate := (*C.UEAggregateMaximumBitrate_t)(unsafe.Pointer(&ie.value.choice[0]))
+				
+				// Extract downlink and uplink bitrates
+				dlBitrate := int(*(*C.long)(unsafe.Pointer(&ueAggBitrate.uEaggregateMaximumBitRateDL)))
+				ulBitrate := int(*(*C.long)(unsafe.Pointer(&ueAggBitrate.uEaggregateMaximumBitRateUL)))
+				
+				ieStruct.Value = fmt.Sprintf("UEAggregateMaximumBitrate(DL: %d bps, UL: %d bps)", dlBitrate, ulBitrate)
+				ieStruct.RawValue = fmt.Sprintf("dl_bitrate=%d ul_bitrate=%d", dlBitrate, ulBitrate)
+				log.Printf("DEBUG: UEContextModificationRequest extracted UEAggregateMaximumBitrate: DL=%d, UL=%d", dlBitrate, ulBitrate)
+			} else {
+				log.Printf("DEBUG: UEContextModificationRequest IE[%d] present type mismatch for UEAggregateMaximumBitrate: expected %d, got %d", 
+					i, C.UEContextModificationRequestIEs__value_PR_UEAggregateMaximumBitrate, ie.value.present)
+				ieStruct.Value = "Present type mismatch"
+				ieStruct.RawValue = fmt.Sprintf("expected=%d got=%d", C.UEContextModificationRequestIEs__value_PR_UEAggregateMaximumBitrate, ie.value.present)
+			}
+
+		case 159: // id_RegisteredLAI  
+			if ie.value.present == C.UEContextModificationRequestIEs__value_PR_LAI {
+				lai := (*C.LAI_t)(unsafe.Pointer(&ie.value.choice[0]))
+				
+				// Extract PLMN Identity 
+				plmnBytes := C.GoBytes(unsafe.Pointer(lai.pLMNidentity.buf), C.int(lai.pLMNidentity.size))
+				plmnHex := fmt.Sprintf("%x", plmnBytes)
+				
+				// Decode PLMN Identity to MCC/MNC (similar to TAI decoding)
+				var mcc, mnc string
+				if len(plmnBytes) >= 3 {
+					// MCC digits: [0]&0x0F, [0]>>4, [1]&0x0F
+					mcc = fmt.Sprintf("%d%d%d", plmnBytes[0]&0x0F, (plmnBytes[0]>>4)&0x0F, plmnBytes[1]&0x0F)
+					
+					// MNC: depends on [1]>>4 
+					if (plmnBytes[1]>>4)&0x0F == 0x0F {
+						// 2-digit MNC: [2]&0x0F, [2]>>4
+						mnc = fmt.Sprintf("%d%d", plmnBytes[2]&0x0F, (plmnBytes[2]>>4)&0x0F)
+					} else {
+						// 3-digit MNC: [1]>>4, [2]&0x0F, [2]>>4
+						mnc = fmt.Sprintf("%d%d%d", (plmnBytes[1]>>4)&0x0F, plmnBytes[2]&0x0F, (plmnBytes[2]>>4)&0x0F)
+					}
+				}
+				
+				// Extract LAC
+				lacBytes := C.GoBytes(unsafe.Pointer(lai.lAC.buf), C.int(lai.lAC.size))
+				lacHex := fmt.Sprintf("%x", lacBytes)
+				var lacValue uint16
+				if len(lacBytes) >= 2 {
+					lacValue = uint16(lacBytes[0])<<8 | uint16(lacBytes[1])
+				}
+				
+				ieStruct.Value = fmt.Sprintf("LAI(PLMN: MCC %s, MNC %s, LAC: 0x%s)", mcc, mnc, lacHex)
+				ieStruct.RawValue = fmt.Sprintf("plmn=%s lac=%s lac_value=%d", plmnHex, lacHex, lacValue)
+				log.Printf("DEBUG: UEContextModificationRequest extracted LAI: MCC=%s, MNC=%s, LAC=0x%s (%d)", mcc, mnc, lacHex, lacValue)
+			} else {
+				log.Printf("DEBUG: UEContextModificationRequest IE[%d] present type mismatch for LAI: expected %d, got %d", 
+					i, C.UEContextModificationRequestIEs__value_PR_LAI, ie.value.present)
+				ieStruct.Value = "Present type mismatch"
+				ieStruct.RawValue = fmt.Sprintf("expected=%d got=%d", C.UEContextModificationRequestIEs__value_PR_LAI, ie.value.present)
+			}
+
+		default:
+			// For unsupported IEs, show basic information
+			ieStruct.Value = fmt.Sprintf("Unsupported IE (present: %d)", ie.value.present)
+			ieStruct.RawValue = fmt.Sprintf("id=%d present=%d", ie.id, ie.value.present)
+			log.Printf("DEBUG: UEContextModificationRequest unsupported IE - ID: %d, Present: %d", ie.id, ie.value.present)
+		}
+
+		result = append(result, ieStruct)
+	}
+
+	log.Printf("DEBUG: UEContextModificationRequest extraction completed with %d IEs", len(result))
+	return result
+}
+
+// Helper function to extract IEs from UEContextModificationIndication
+func extractUEContextModificationIndicationIEs(packet unsafe.Pointer) []*InformationElement {
+	var result []*InformationElement
+
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.InitiatingMessage_t)(unsafe.Pointer(&pdu.choice))
+	val := (*C.UEContextModificationIndication_t)(unsafe.Pointer(&msg.value.choice))
+
+	log.Printf("DEBUG: UEContextModificationIndication extracting IEs, protocolIEs.list.count: %d", val.protocolIEs.list.count)
+
+	var ies []*C.UEContextModificationIndicationIEs_t
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
+	slice.Cap = (int)(val.protocolIEs.list.count)
+	slice.Len = (int)(val.protocolIEs.list.count)
+	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+
+	log.Printf("DEBUG: UEContextModificationIndication got %d IEs in slice", len(ies))
+
+	for i, ie := range ies {
+		if ie == nil {
+			log.Printf("DEBUG: UEContextModificationIndication IE[%d] is nil, skipping", i)
+			continue
+		}
+
+		ieStruct := &InformationElement{
+			ID:          int(ie.id),
+			Name:        GetIEName(int(ie.id)),
+			Criticality: getCriticalityString(int(ie.criticality)),
+		}
+
+		log.Printf("DEBUG: UEContextModificationIndication IE[%d] - ID: %d, Name: %s, Present: %d", i, ie.id, ieStruct.Name, ie.value.present)
+
+		// Extract value based on ID and present type
+		switch int(ie.id) {
+		case 0: // id_MME_UE_S1AP_ID
+			if ie.value.present == C.UEContextModificationIndicationIEs__value_PR_MME_UE_S1AP_ID {
+				mmeUeS1apId := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice[0]))
+				ieStruct.Value = int(*mmeUeS1apId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *mmeUeS1apId)
+				log.Printf("DEBUG: UEContextModificationIndication extracted MME_UE_S1AP_ID: %d", *mmeUeS1apId)
+			} else {
+				log.Printf("DEBUG: UEContextModificationIndication IE[%d] present type mismatch for MME_UE_S1AP_ID: expected %d, got %d", 
+					i, C.UEContextModificationIndicationIEs__value_PR_MME_UE_S1AP_ID, ie.value.present)
+				ieStruct.Value = "Present type mismatch"
+				ieStruct.RawValue = fmt.Sprintf("expected=%d got=%d", C.UEContextModificationIndicationIEs__value_PR_MME_UE_S1AP_ID, ie.value.present)
+			}
+
+		case 8: // id_eNB_UE_S1AP_ID  
+			if ie.value.present == C.UEContextModificationIndicationIEs__value_PR_ENB_UE_S1AP_ID {
+				enbUeS1apId := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice[0]))
+				ieStruct.Value = int(*enbUeS1apId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *enbUeS1apId)
+				log.Printf("DEBUG: UEContextModificationIndication extracted eNB_UE_S1AP_ID: %d", *enbUeS1apId)
+			} else {
+				log.Printf("DEBUG: UEContextModificationIndication IE[%d] present type mismatch for eNB_UE_S1AP_ID: expected %d, got %d", 
+					i, C.UEContextModificationIndicationIEs__value_PR_ENB_UE_S1AP_ID, ie.value.present)
+				ieStruct.Value = "Present type mismatch"
+				ieStruct.RawValue = fmt.Sprintf("expected=%d got=%d", C.UEContextModificationIndicationIEs__value_PR_ENB_UE_S1AP_ID, ie.value.present)
+			}
+
+		case 87: // id_CSGMembershipInfo
+			if ie.value.present == C.UEContextModificationIndicationIEs__value_PR_CSGMembershipInfo {
+				ieStruct.Value = "CSGMembershipInfo (complex structure)"
+				ieStruct.RawValue = "csgMembershipInfo=present"
+				log.Printf("DEBUG: UEContextModificationIndication extracted CSGMembershipInfo")
+			} else {
+				log.Printf("DEBUG: UEContextModificationIndication IE[%d] present type mismatch for CSGMembershipInfo: expected %d, got %d", 
+					i, C.UEContextModificationIndicationIEs__value_PR_CSGMembershipInfo, ie.value.present)
+				ieStruct.Value = "Present type mismatch"
+				ieStruct.RawValue = fmt.Sprintf("expected=%d got=%d", C.UEContextModificationIndicationIEs__value_PR_CSGMembershipInfo, ie.value.present)
+			}
+
+		default:
+			// For unsupported IEs, show basic information
+			ieStruct.Value = fmt.Sprintf("Unsupported IE (present: %d)", ie.value.present)
+			ieStruct.RawValue = fmt.Sprintf("id=%d present=%d", ie.id, ie.value.present)
+			log.Printf("DEBUG: UEContextModificationIndication unsupported IE - ID: %d, Present: %d", ie.id, ie.value.present)
+		}
+
+		result = append(result, ieStruct)
+	}
+
+	log.Printf("DEBUG: UEContextModificationIndication extraction completed with %d IEs", len(result))
+	return result
+}
+
+// Helper function to extract IEs from UEContextModificationConfirm
+func extractUEContextModificationConfirmIEs(packet unsafe.Pointer) []*InformationElement {
+	var result []*InformationElement
+
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.SuccessfulOutcome_t)(unsafe.Pointer(&pdu.choice))
+	val := (*C.UEContextModificationConfirm_t)(unsafe.Pointer(&msg.value.choice))
+
+	log.Printf("DEBUG: UEContextModificationConfirm extracting IEs, protocolIEs.list.count: %d", val.protocolIEs.list.count)
+
+	var ies []*C.UEContextModificationConfirmIEs_t
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
+	slice.Cap = (int)(val.protocolIEs.list.count)
+	slice.Len = (int)(val.protocolIEs.list.count)
+	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+
+	log.Printf("DEBUG: UEContextModificationConfirm got %d IEs in slice", len(ies))
+
+	for i, ie := range ies {
+		if ie == nil {
+			log.Printf("DEBUG: UEContextModificationConfirm IE[%d] is nil, skipping", i)
+			continue
+		}
+
+		ieStruct := &InformationElement{
+			ID:          int(ie.id),
+			Name:        GetIEName(int(ie.id)),
+			Criticality: getCriticalityString(int(ie.criticality)),
+		}
+
+		log.Printf("DEBUG: UEContextModificationConfirm IE[%d] - ID: %d, Name: %s, Present: %d", i, ie.id, ieStruct.Name, ie.value.present)
+
+		// Extract value based on ID and present type
+		switch int(ie.id) {
+		case 0: // id_MME_UE_S1AP_ID
+			if ie.value.present == C.UEContextModificationConfirmIEs__value_PR_MME_UE_S1AP_ID {
+				mmeUeS1apId := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice[0]))
+				ieStruct.Value = int(*mmeUeS1apId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *mmeUeS1apId)
+				log.Printf("DEBUG: UEContextModificationConfirm extracted MME_UE_S1AP_ID: %d", *mmeUeS1apId)
+			} else {
+				log.Printf("DEBUG: UEContextModificationConfirm IE[%d] present type mismatch for MME_UE_S1AP_ID: expected %d, got %d", 
+					i, C.UEContextModificationConfirmIEs__value_PR_MME_UE_S1AP_ID, ie.value.present)
+				ieStruct.Value = "Present type mismatch"
+				ieStruct.RawValue = fmt.Sprintf("expected=%d got=%d", C.UEContextModificationConfirmIEs__value_PR_MME_UE_S1AP_ID, ie.value.present)
+			}
+
+		case 8: // id_eNB_UE_S1AP_ID  
+			if ie.value.present == C.UEContextModificationConfirmIEs__value_PR_ENB_UE_S1AP_ID {
+				enbUeS1apId := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice[0]))
+				ieStruct.Value = int(*enbUeS1apId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *enbUeS1apId)
+				log.Printf("DEBUG: UEContextModificationConfirm extracted eNB_UE_S1AP_ID: %d", *enbUeS1apId)
+			} else {
+				log.Printf("DEBUG: UEContextModificationConfirm IE[%d] present type mismatch for eNB_UE_S1AP_ID: expected %d, got %d", 
+					i, C.UEContextModificationConfirmIEs__value_PR_ENB_UE_S1AP_ID, ie.value.present)
+				ieStruct.Value = "Present type mismatch"
+				ieStruct.RawValue = fmt.Sprintf("expected=%d got=%d", C.UEContextModificationConfirmIEs__value_PR_ENB_UE_S1AP_ID, ie.value.present)
+			}
+
+		case 86: // id_CSGMembershipStatus
+			if ie.value.present == C.UEContextModificationConfirmIEs__value_PR_CSGMembershipStatus {
+				ieStruct.Value = "CSGMembershipStatus (complex structure)"
+				ieStruct.RawValue = "csgMembershipStatus=present"
+				log.Printf("DEBUG: UEContextModificationConfirm extracted CSGMembershipStatus")
+			} else {
+				log.Printf("DEBUG: UEContextModificationConfirm IE[%d] present type mismatch for CSGMembershipStatus: expected %d, got %d", 
+					i, C.UEContextModificationConfirmIEs__value_PR_CSGMembershipStatus, ie.value.present)
+				ieStruct.Value = "Present type mismatch"
+				ieStruct.RawValue = fmt.Sprintf("expected=%d got=%d", C.UEContextModificationConfirmIEs__value_PR_CSGMembershipStatus, ie.value.present)
+			}
+
+		case 58: // id_CriticalityDiagnostics
+			if ie.value.present == C.UEContextModificationConfirmIEs__value_PR_CriticalityDiagnostics {
+				ieStruct.Value = "CriticalityDiagnostics (complex structure)"
+				ieStruct.RawValue = "criticalityDiagnostics=present"
+				log.Printf("DEBUG: UEContextModificationConfirm extracted CriticalityDiagnostics")
+			} else {
+				log.Printf("DEBUG: UEContextModificationConfirm IE[%d] present type mismatch for CriticalityDiagnostics: expected %d, got %d", 
+					i, C.UEContextModificationConfirmIEs__value_PR_CriticalityDiagnostics, ie.value.present)
+				ieStruct.Value = "Present type mismatch"
+				ieStruct.RawValue = fmt.Sprintf("expected=%d got=%d", C.UEContextModificationConfirmIEs__value_PR_CriticalityDiagnostics, ie.value.present)
+			}
+
+		default:
+			// For unsupported IEs, show basic information
+			ieStruct.Value = fmt.Sprintf("Unsupported IE (present: %d)", ie.value.present)
+			ieStruct.RawValue = fmt.Sprintf("id=%d present=%d", ie.id, ie.value.present)
+			log.Printf("DEBUG: UEContextModificationConfirm unsupported IE - ID: %d, Present: %d", ie.id, ie.value.present)
+		}
+
+		result = append(result, ieStruct)
+	}
+
+	log.Printf("DEBUG: UEContextModificationConfirm extraction completed with %d IEs", len(result))
+	return result
+}
+
+// Helper function to extract IEs from PathSwitchRequestAcknowledge
+func extractPathSwitchRequestAcknowledgeIEs(packet unsafe.Pointer) []*InformationElement {
+	var result []*InformationElement
+
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.SuccessfulOutcome_t)(unsafe.Pointer(&pdu.choice))
+	val := (*C.PathSwitchRequestAcknowledge_t)(unsafe.Pointer(&msg.value.choice))
+
+	log.Printf("DEBUG: PathSwitchRequestAcknowledge extracting IEs, protocolIEs.list.count: %d", val.protocolIEs.list.count)
+
+	var ies []*C.PathSwitchRequestAcknowledgeIEs_t
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
+	slice.Cap = (int)(val.protocolIEs.list.count)
+	slice.Len = (int)(val.protocolIEs.list.count)
+	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+
+	log.Printf("DEBUG: PathSwitchRequestAcknowledge got %d IEs in slice", len(ies))
+
+	for i, ie := range ies {
+		if ie == nil {
+			log.Printf("DEBUG: PathSwitchRequestAcknowledge IE[%d] is nil, skipping", i)
+			continue
+		}
+
+		ieStruct := &InformationElement{
+			ID:          int(ie.id),
+			Name:        GetIEName(int(ie.id)),
+			Criticality: getCriticalityString(int(ie.criticality)),
+		}
+
+		log.Printf("DEBUG: PathSwitchRequestAcknowledge IE[%d] - ID: %d, Name: %s, Present: %d", i, ie.id, ieStruct.Name, ie.value.present)
+
+		// Extract value based on ID
+		switch int(ie.id) {
+		case 0: // id_MME_UE_S1AP_ID
+			if ie.value.present == C.PathSwitchRequestAcknowledgeIEs__value_PR_MME_UE_S1AP_ID {
+				mmeUeS1apId := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice[0]))
+				ieStruct.Value = int(*mmeUeS1apId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *mmeUeS1apId)
+				log.Printf("DEBUG: PathSwitchRequestAcknowledge extracted MME_UE_S1AP_ID: %d", *mmeUeS1apId)
+			} else {
+				log.Printf("DEBUG: PathSwitchRequestAcknowledge IE[%d] present type mismatch for MME_UE_S1AP_ID: expected %d, got %d", 
+					i, C.PathSwitchRequestAcknowledgeIEs__value_PR_MME_UE_S1AP_ID, ie.value.present)
+				ieStruct.Value = "Present type mismatch"
+				ieStruct.RawValue = fmt.Sprintf("expected=%d got=%d", C.PathSwitchRequestAcknowledgeIEs__value_PR_MME_UE_S1AP_ID, ie.value.present)
+			}
+
+		case 8: // id_eNB_UE_S1AP_ID  
+			if ie.value.present == C.PathSwitchRequestAcknowledgeIEs__value_PR_ENB_UE_S1AP_ID {
+				enbUeS1apId := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice[0]))
+				ieStruct.Value = int(*enbUeS1apId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *enbUeS1apId)
+				log.Printf("DEBUG: PathSwitchRequestAcknowledge extracted eNB_UE_S1AP_ID: %d", *enbUeS1apId)
+			} else {
+				log.Printf("DEBUG: PathSwitchRequestAcknowledge IE[%d] present type mismatch for eNB_UE_S1AP_ID: expected %d, got %d", 
+					i, C.PathSwitchRequestAcknowledgeIEs__value_PR_ENB_UE_S1AP_ID, ie.value.present)
+				ieStruct.Value = "Present type mismatch"
+				ieStruct.RawValue = fmt.Sprintf("expected=%d got=%d", C.PathSwitchRequestAcknowledgeIEs__value_PR_ENB_UE_S1AP_ID, ie.value.present)
+			}
+
+		case 40: // id_SecurityContext
+			if ie.value.present == C.PathSwitchRequestAcknowledgeIEs__value_PR_SecurityContext {
+				securityContext := (*C.SecurityContext_t)(unsafe.Pointer(&ie.value.choice[0]))
+				
+				// Extract nextHopChainingCount
+				nextHopCount := int(securityContext.nextHopChainingCount)
+				
+				// Extract nextHopParameter (SecurityKey - BIT_STRING)
+				securityKey := &securityContext.nextHopParameter
+				
+				// Get the bit string data
+				keyBytes := C.GoBytes(unsafe.Pointer(securityKey.buf), C.int(securityKey.size))
+				keyHex := fmt.Sprintf("%x", keyBytes)
+				
+				// Calculate bit length 
+				bitLength := int(securityKey.bits_unused)
+				totalBits := (int(securityKey.size) * 8) - bitLength
+				
+				ieStruct.Value = fmt.Sprintf("SecurityContext(nextHopChainingCount: %d, nextHopParameter: %s [bit length %d])", 
+					nextHopCount, keyHex, totalBits)
+				ieStruct.RawValue = fmt.Sprintf("nextHopChainingCount=%d nextHopParameter=%s bits=%d", 
+					nextHopCount, keyHex, totalBits)
+					
+				log.Printf("DEBUG: PathSwitchRequestAcknowledge extracted SecurityContext: nextHopChainingCount=%d, nextHopParameter=%s [%d bits]", 
+					nextHopCount, keyHex, totalBits)
+			} else {
+				log.Printf("DEBUG: PathSwitchRequestAcknowledge IE[%d] present type mismatch for SecurityContext: expected %d, got %d", 
+					i, C.PathSwitchRequestAcknowledgeIEs__value_PR_SecurityContext, ie.value.present)
+				ieStruct.Value = "Present type mismatch"
+				ieStruct.RawValue = fmt.Sprintf("expected=%d got=%d", C.PathSwitchRequestAcknowledgeIEs__value_PR_SecurityContext, ie.value.present)
+			}
+
+		default:
+			// For unsupported IEs, show basic information
+			ieStruct.Value = fmt.Sprintf("Unsupported IE (present: %d)", ie.value.present)
+			ieStruct.RawValue = fmt.Sprintf("id=%d present=%d", ie.id, ie.value.present)
+			log.Printf("DEBUG: PathSwitchRequestAcknowledge unsupported IE - ID: %d, Present: %d", ie.id, ie.value.present)
+		}
+
+		result = append(result, ieStruct)
+	}
+
+	log.Printf("DEBUG: PathSwitchRequestAcknowledge extraction completed with %d IEs", len(result))
+	return result
 }

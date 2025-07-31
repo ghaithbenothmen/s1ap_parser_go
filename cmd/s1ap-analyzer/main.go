@@ -1382,8 +1382,11 @@ func (a *Analyzer) parseS1APMessage(packet gopacket.Packet, payload []byte, msgI
 	// Extract real procedure code from payload
 	realProcCode := s1ap.ExtractProcedureCode(payload)
 	
-	// Get specific message name based on message type and procedure code
-	procedureName := s1ap.GetMessageName(msgType, realProcCode)
+	// Analyze PDU type
+	pduType, pduTypeCode := a.analyzePDUType(payload)
+	
+	// Get specific message name based on message type, procedure code, and PDU type
+	procedureName := s1ap.GetMessageName(msgType, realProcCode, pduType)
 
 	if a.config.Debug {
 		log.Printf("DEBUG: parseS1APMessage - procedureName: %s, msgType: %d, realProcCode: %d", procedureName, msgType, realProcCode)
@@ -1391,9 +1394,6 @@ func (a *Analyzer) parseS1APMessage(packet gopacket.Packet, payload []byte, msgI
 
 	// Get IP information
 	srcIP, dstIP := a.extractIPInfo(packet)
-
-	// Analyze PDU type
-	pduType, pduTypeCode := a.analyzePDUType(payload)
 
 	// Extract IEs from the decoded PDU
 	if a.config.Debug {

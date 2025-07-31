@@ -172,8 +172,32 @@ func GetProcedureName(code int) string {
 	return "Unknown"
 }
 
-// Function to get specific message name based on message type and procedure code
-func GetMessageName(messageType int, procedureCode int) string {
+// Function to get specific message name based on message type, procedure code, and PDU type
+func GetMessageName(messageType int, procedureCode int, pduType string) string {
+	// Special handling for UEContextModification (procedure code 21)
+	if procedureCode == 21 {
+		switch pduType {
+		case "initiatingMessage":
+			if messageType == UE_CONTEXT_MODIFICATION {
+				return "UEContextModificationRequest"
+			} else if messageType == UE_CONTEXT_MODIFICATION_INDICATION {
+				return "UEContextModificationIndication"
+			}
+		case "successfulOutcome":
+			// Need to distinguish between Response and Confirm
+			// For now, we'll check the messageType value
+			if messageType == UE_CONTEXT_MODIFICATION {
+				return "UEContextModificationResponse"
+			} else {
+				return "UEContextModificationConfirm"
+			}
+		case "unsuccessfulOutcome":
+			return "UEContextModificationFailure"
+		}
+		// Fallback for UEContextModification
+		return "UEContextModification"
+	}
+	
 	switch messageType {
 	case UE_CONTEXT_RELEASE_COMPLETE:
 		return "UEContextReleaseComplete"
@@ -207,6 +231,11 @@ func GetMessageName(messageType int, procedureCode int) string {
 		// Fall back to procedure name for other message types
 		return GetProcedureName(procedureCode)
 	}
+}
+
+// Legacy function for backward compatibility
+func GetMessageNameLegacy(messageType int, procedureCode int) string {
+	return GetMessageName(messageType, procedureCode, "")
 }
 
 // Function to extract real procedure code from ASN.1 structure
