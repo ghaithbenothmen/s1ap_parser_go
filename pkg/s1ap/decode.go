@@ -27,10 +27,19 @@ package s1ap
 // #include "LocationReportingFailureIndication.h"
 // #include "LocationReport.h"
 // #include "UECapabilityInfoIndication.h"
-// #include "UERadioCapability.h"
+// #include "UERadioCapability.h" 
 // #include "TransportLayerAddress.h"
 // #include "PrivacyIndicator.h"
-// #include "UECapabilityInfoIndication.h"
+// #include "E-RABReleaseResponse.h"
+// #include "E-RABReleaseCommand.h"
+// #include "E-RABReleaseIndication.h"
+// #include "E-RABReleaseListBearerRelComp.h"
+// #include "E-RABReleaseItemBearerRelComp.h"
+// #include "E-RABList.h"
+// #include "E-RABItem.h"
+// #include "UECapabilityInfoRequest.h"
+// #include "E-RAB-ID.h"
+// #include "Cause.h"
 // #include <stdio.h>
 // #include <stdlib.h>
 import "C"
@@ -864,6 +873,18 @@ func extractInitiatingMessageIEs(packet unsafe.Pointer, messageType int, procCod
 		return ies
 	}
 	
+	if procCode == 7 { // E-RABRelease procedure code
+		// Check message type to distinguish between Command and Indication
+		if messageType == E_RAB_RELEASE {
+			log.Printf("DEBUG: Detected E-RABReleaseCommand via procedure code 7 - calling extractERABReleaseCommandIEs")
+			ies = extractERABReleaseCommandIEs(packet)
+		} else if messageType == E_RAB_RELEASE_INDICATION {
+			log.Printf("DEBUG: Detected E-RABReleaseIndication via procedure code 7 - calling extractERABReleaseIndicationIEs")
+			ies = extractERABReleaseIndicationIEs(packet)
+		}
+		return ies
+	}
+	
 	if procCode == 21 { // UEContextModification procedure code
 		log.Printf("DEBUG: Detected UEContextModificationRequest via procedure code 21 - calling extractUEContextModificationRequestIEs")
 		ies = extractUEContextModificationRequestIEs(packet)
@@ -967,6 +988,9 @@ func extractSuccessfulOutcomeIEs(packet unsafe.Pointer, messageType int) []*Info
 	case 23: // UEContextRelease
 		log.Printf("DEBUG: Calling extractUEContextReleaseCompleteIEs for procedure code 23")
 		ies = extractUEContextReleaseCompleteIEs(packet)
+	case 7: // E-RABRelease
+		log.Printf("DEBUG: Calling extractERABReleaseResponseIEs for procedure code 7")
+		ies = extractERABReleaseResponseIEs(packet)
 	case 5: // E-RABSetup
 		ies = extractERABSetupResponseIEs(packet)
 	case 17: // S1Setup
@@ -2824,6 +2848,228 @@ func extractUECapabilityInfoIndicationIEs(packet unsafe.Pointer) []*InformationE
 	}
 
 	log.Printf("DEBUG: UECapabilityInfoIndication extraction completed with %d IEs", len(result))
+	return result
+}
+
+// extractERABReleaseResponseIEs extracts IEs from E-RABReleaseResponse
+func extractERABReleaseResponseIEs(packet unsafe.Pointer) []*InformationElement {
+	var result []*InformationElement
+
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.SuccessfulOutcome_t)(unsafe.Pointer(&pdu.choice))
+	val := (*C.E_RABReleaseResponse_t)(unsafe.Pointer(&msg.value.choice))
+
+	log.Printf("DEBUG: E-RABReleaseResponse extracting IEs, protocolIEs.list.count: %d", val.protocolIEs.list.count)
+
+	var ies []*C.E_RABReleaseResponseIEs_t
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
+	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+	slice.Len = int(val.protocolIEs.list.count)
+	slice.Cap = int(val.protocolIEs.list.count)
+
+	log.Printf("DEBUG: E-RABReleaseResponse got %d IEs in slice", len(ies))
+
+	for i, ie := range ies {
+		ieStruct := &InformationElement{
+			ID:          int(ie.id),
+			Name:        GetIEName(int(ie.id)),
+			Criticality: getCriticalityString(int(ie.criticality)),
+		}
+
+		log.Printf("DEBUG: E-RABReleaseResponse IE[%d] - ID: %d, Name: %s, Present: %d", i, ie.id, ieStruct.Name, ie.value.present)
+
+		switch ie.id {
+		case 0: // MME_UE_S1AP_ID
+			if ie.value.present == C.E_RABReleaseResponseIEs__value_PR_MME_UE_S1AP_ID {
+				mmeId := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+				ieStruct.Value = int(*mmeId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *mmeId)
+				log.Printf("DEBUG: E-RABReleaseResponse extracted MME_UE_S1AP_ID: %d", *mmeId)
+			}
+
+		case 8: // eNB_UE_S1AP_ID
+			if ie.value.present == C.E_RABReleaseResponseIEs__value_PR_ENB_UE_S1AP_ID {
+				enbId := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+				ieStruct.Value = int(*enbId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *enbId)
+				log.Printf("DEBUG: E-RABReleaseResponse extracted eNB_UE_S1AP_ID: %d", *enbId)
+			}
+
+		case 69: // E-RABReleaseListBearerRelComp
+			if ie.value.present == C.E_RABReleaseResponseIEs__value_PR_E_RABReleaseListBearerRelComp {
+				erabReleaseList := (*C.E_RABReleaseListBearerRelComp_t)(unsafe.Pointer(&ie.value.choice))
+				
+				log.Printf("DEBUG: E-RABReleaseResponse E-RABReleaseListBearerRelComp count: %d", erabReleaseList.list.count)
+				
+				// Extract list items
+				var items []map[string]interface{}
+				var listIEs []*C.E_RABReleaseItemBearerRelCompIEs_t
+				listSlice := (*reflect.SliceHeader)((unsafe.Pointer(&listIEs)))
+				listSlice.Data = uintptr(unsafe.Pointer(erabReleaseList.list.array))
+				listSlice.Len = int(erabReleaseList.list.count)
+				listSlice.Cap = int(erabReleaseList.list.count)
+
+				for j, listIE := range listIEs {
+					log.Printf("DEBUG: E-RABReleaseResponse List IE[%d] - ID: %d, Present: %d", j, listIE.id, listIE.value.present)
+					
+					if listIE.id == 15 { // E-RABReleaseItemBearerRelComp
+						if listIE.value.present == C.E_RABReleaseItemBearerRelCompIEs__value_PR_E_RABReleaseItemBearerRelComp {
+							erabItem := (*C.E_RABReleaseItemBearerRelComp_t)(unsafe.Pointer(&listIE.value.choice))
+							
+							item := map[string]interface{}{
+								"e_RAB_ID": int(erabItem.e_RAB_ID),
+							}
+							items = append(items, item)
+							
+							log.Printf("DEBUG: E-RABReleaseResponse extracted E-RAB-ID: %d", erabItem.e_RAB_ID)
+						}
+					}
+				}
+				
+				ieStruct.Value = fmt.Sprintf("E-RABReleaseListBearerRelComp(%d items)", len(items))
+				if len(items) > 0 {
+					ieStruct.RawValue = fmt.Sprintf("count=%d", len(items))
+					for i, item := range items {
+						if erabId, ok := item["e_RAB_ID"].(int); ok {
+							ieStruct.RawValue += fmt.Sprintf(" item_%d={e_RAB_ID=%d}", i, erabId)
+						}
+					}
+				}
+			}
+
+		default:
+			ieStruct.Value = fmt.Sprintf("Unsupported IE (present: %d)", ie.value.present)
+			ieStruct.RawValue = fmt.Sprintf("id=%d present=%d", ie.id, ie.value.present)
+			log.Printf("DEBUG: E-RABReleaseResponse unsupported IE - ID: %d, Present: %d", ie.id, ie.value.present)
+		}
+
+		result = append(result, ieStruct)
+	}
+
+	log.Printf("DEBUG: E-RABReleaseResponse extraction completed with %d IEs", len(result))
+	return result
+}
+
+// extractERABReleaseCommandIEs extracts IEs from E-RABReleaseCommand
+func extractERABReleaseCommandIEs(packet unsafe.Pointer) []*InformationElement {
+	var result []*InformationElement
+
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.InitiatingMessage_t)(unsafe.Pointer(&pdu.choice))
+	val := (*C.E_RABReleaseCommand_t)(unsafe.Pointer(&msg.value.choice))
+
+	log.Printf("DEBUG: E-RABReleaseCommand extracting IEs, protocolIEs.list.count: %d", val.protocolIEs.list.count)
+
+	var ies []*C.E_RABReleaseCommandIEs_t
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
+	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+	slice.Len = int(val.protocolIEs.list.count)
+	slice.Cap = int(val.protocolIEs.list.count)
+
+	for i, ie := range ies {
+		ieStruct := &InformationElement{
+			ID:          int(ie.id),
+			Name:        GetIEName(int(ie.id)),
+			Criticality: getCriticalityString(int(ie.criticality)),
+		}
+
+		log.Printf("DEBUG: E-RABReleaseCommand IE[%d] - ID: %d, Name: %s, Present: %d", i, ie.id, ieStruct.Name, ie.value.present)
+
+		switch ie.id {
+		case 0: // MME_UE_S1AP_ID
+			if ie.value.present == C.E_RABReleaseCommandIEs__value_PR_MME_UE_S1AP_ID {
+				mmeId := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+				ieStruct.Value = int(*mmeId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *mmeId)
+			}
+
+		case 8: // eNB_UE_S1AP_ID
+			if ie.value.present == C.E_RABReleaseCommandIEs__value_PR_ENB_UE_S1AP_ID {
+				enbId := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+				ieStruct.Value = int(*enbId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *enbId)
+			}
+
+		case 33: // E-RABToBeReleasedList
+			if ie.value.present == C.E_RABReleaseCommandIEs__value_PR_E_RABList {
+				ieStruct.Value = "E-RABToBeReleasedList"
+				ieStruct.RawValue = "E-RAB list to be released"
+			}
+
+		case 26: // NAS_PDU
+			if ie.value.present == C.E_RABReleaseCommandIEs__value_PR_NAS_PDU {
+				nasPdu := (*C.NAS_PDU_t)(unsafe.Pointer(&ie.value.choice))
+				ieStruct.Value = fmt.Sprintf("NAS_PDU(%d bytes)", nasPdu.size)
+				ieStruct.RawValue = fmt.Sprintf("%d bytes", nasPdu.size)
+			}
+
+		default:
+			ieStruct.Value = fmt.Sprintf("Unsupported IE (present: %d)", ie.value.present)
+			ieStruct.RawValue = fmt.Sprintf("id=%d present=%d", ie.id, ie.value.present)
+		}
+
+		result = append(result, ieStruct)
+	}
+
+	log.Printf("DEBUG: E-RABReleaseCommand extraction completed with %d IEs", len(result))
+	return result
+}
+
+// extractERABReleaseIndicationIEs extracts IEs from E-RABReleaseIndication
+func extractERABReleaseIndicationIEs(packet unsafe.Pointer) []*InformationElement {
+	var result []*InformationElement
+
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.InitiatingMessage_t)(unsafe.Pointer(&pdu.choice))
+	val := (*C.E_RABReleaseIndication_t)(unsafe.Pointer(&msg.value.choice))
+
+	log.Printf("DEBUG: E-RABReleaseIndication extracting IEs, protocolIEs.list.count: %d", val.protocolIEs.list.count)
+
+	var ies []*C.E_RABReleaseIndicationIEs_t
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
+	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+	slice.Len = int(val.protocolIEs.list.count)
+	slice.Cap = int(val.protocolIEs.list.count)
+
+	for i, ie := range ies {
+		ieStruct := &InformationElement{
+			ID:          int(ie.id),
+			Name:        GetIEName(int(ie.id)),
+			Criticality: getCriticalityString(int(ie.criticality)),
+		}
+
+		log.Printf("DEBUG: E-RABReleaseIndication IE[%d] - ID: %d, Name: %s, Present: %d", i, ie.id, ieStruct.Name, ie.value.present)
+
+		switch ie.id {
+		case 0: // MME_UE_S1AP_ID
+			if ie.value.present == C.E_RABReleaseIndicationIEs__value_PR_MME_UE_S1AP_ID {
+				mmeId := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+				ieStruct.Value = int(*mmeId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *mmeId)
+			}
+
+		case 8: // eNB_UE_S1AP_ID
+			if ie.value.present == C.E_RABReleaseIndicationIEs__value_PR_ENB_UE_S1AP_ID {
+				enbId := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+				ieStruct.Value = int(*enbId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *enbId)
+			}
+
+		case 104: // E-RABReleasedList
+			if ie.value.present == C.E_RABReleaseIndicationIEs__value_PR_E_RABList {
+				ieStruct.Value = "E-RABReleasedList"
+				ieStruct.RawValue = "List of released E-RABs"
+			}
+
+		default:
+			ieStruct.Value = fmt.Sprintf("Unsupported IE (present: %d)", ie.value.present)
+			ieStruct.RawValue = fmt.Sprintf("id=%d present=%d", ie.id, ie.value.present)
+		}
+
+		result = append(result, ieStruct)
+	}
+
+	log.Printf("DEBUG: E-RABReleaseIndication extraction completed with %d IEs", len(result))
 	return result
 }
 
