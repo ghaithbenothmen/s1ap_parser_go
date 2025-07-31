@@ -7,6 +7,27 @@ package s1ap
 // #include "SuccessfulOutcome.h"
 // #include "UnsuccessfulOutcome.h"
 // #include "ProtocolIE-Field.h"
+// #include "Paging.h"
+// #include "UEPagingID.h"
+// #include "S-TMSI.h"
+// #include "IMSI.h"
+// #include "CNDomain.h"
+// #include "TAIList.h"
+// #include "TAIItem.h"
+// #include "TAI.h"
+// #include "PagingDRX.h"
+// #include "PagingPriority.h"
+// #include "CellTrafficTrace.h"
+// #include "E-UTRAN-Trace-ID.h"
+// #include "EUTRAN-CGI.h"
+// #include "TraceStart.h"
+// #include "TraceFailureIndication.h"
+// #include "DeactivateTrace.h"
+// #include "LocationReportingControl.h"
+// #include "LocationReportingFailureIndication.h"
+// #include "LocationReport.h"
+// #include "TransportLayerAddress.h"
+// #include "PrivacyIndicator.h"
 // #include <stdio.h>
 // #include <stdlib.h>
 import "C"
@@ -17,6 +38,7 @@ import (
 	"log"
 	"net"
 	"reflect"
+	"strings"
 	"unsafe"
 )
 
@@ -130,7 +152,10 @@ func InitialUEMessageHandle(packet unsafe.Pointer) (int32, error) {
 		case C.ProtocolIE_ID_id_NAS_PDU:
 			//NAS_PDU = &ie->value.choice.NAS_PDU;
 		case C.ProtocolIE_ID_id_TAI:
-			//TAI = &ie->value.choice.TAI;
+			// Extraire et décoder TAI
+			taiPtr := unsafe.Pointer(&ie.value.choice[0])
+			taiValue, taiRaw := extractTAI(taiPtr)
+			log.Printf("IE TAI decoded: %s (raw: %s)", taiValue, taiRaw)
 		case C.ProtocolIE_ID_id_EUTRAN_CGI:
 			//EUTRAN_CGI = &ie->value.choice.EUTRAN_CGI;
 		case C.ProtocolIE_ID_id_S_TMSI:
@@ -156,22 +181,33 @@ func PagingHandle(packet unsafe.Pointer) (string, error) {
 	slice.Len = (int)(val.protocolIEs.list.count)
 	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
 
-	var pagingInfo string = "Paging Details: "
+	var pagingInfo string = "Paging Details:\n"
+	var taiListInfo string
 
 	for _, ie := range ies {
 		switch ie.id {
 		case C.ProtocolIE_ID_id_UEIdentityIndexValue:
-			pagingInfo += "UEIdentityIndexValue found; "
+			pagingInfo += "  - UEIdentityIndexValue found\n"
 		case C.ProtocolIE_ID_id_UEPagingID:
-			pagingInfo += "UEPagingID found; "
+			pagingInfo += "  - UEPagingID found\n"
 		case C.ProtocolIE_ID_id_CNDomain:
-			pagingInfo += "CNDomain found; "
+			pagingInfo += "  - CNDomain found\n"
 		case C.ProtocolIE_ID_id_TAIList:
-			pagingInfo += "TAIList found; "
+			// Extraire et décoder la TAIList complète
+			taiListPtr := unsafe.Pointer(&ie.value.choice[0])
+			taiValue, taiRaw := extractTAIList(taiListPtr)
+			pagingInfo += fmt.Sprintf("  - %s\n", taiValue)
+			taiListInfo = taiRaw
+			log.Printf("TAIList decoded: %s (raw: %s)", taiValue, taiRaw)
 		default:
-			pagingInfo += fmt.Sprintf("Unknown IE %d; ", ie.id)
+			pagingInfo += fmt.Sprintf("  - Unknown IE %d\n", ie.id)
 		}
 	}
+	
+	if taiListInfo != "" {
+		pagingInfo += fmt.Sprintf("Raw TAI data: %s", taiListInfo)
+	}
+	
 	return pagingInfo, nil
 }
 
@@ -404,7 +440,10 @@ func UplinkNASTransportHandle(packet unsafe.Pointer) (int32, int, error) {
 			}
 		case C.ProtocolIE_ID_id_TAI:
 			fmt.Println("IE: TAI")
-			//TAI = &ie->value.choice.TAI;
+			// Extraire et décoder TAI
+			taiPtr := unsafe.Pointer(&ie.value.choice[0])
+			taiValue, taiRaw := extractTAI(taiPtr)
+			log.Printf("IE TAI decoded: %s (raw: %s)", taiValue, taiRaw)
 		case C.ProtocolIE_ID_id_EUTRAN_CGI:
 			fmt.Println("IE: EUTRAN_CGI")
 			//EUTRAN_CGI = &ie->value.choice.EUTRAN_CGI;
@@ -802,6 +841,12 @@ func extractInitiatingMessageIEs(packet unsafe.Pointer, messageType int, procCod
 		return ies
 	}
 	
+	if procCode == 13 { // UplinkNASTransport procedure code
+		log.Printf("DEBUG: Detected UplinkNASTransport via procedure code 13 - calling extractUplinkNASTransportIEs")
+		ies = extractUplinkNASTransportIEs(packet)
+		return ies
+	}
+	
 	switch msg.value.present {
 	case C.InitiatingMessage__value_PR_InitialUEMessage:
 		log.Printf("DEBUG: Detected InitialUEMessage - calling extractInitialUEMessageIEs")
@@ -811,19 +856,35 @@ func extractInitiatingMessageIEs(packet unsafe.Pointer, messageType int, procCod
 		ies = extractUplinkNASTransportIEs(packet)
 	case C.InitiatingMessage__value_PR_Paging:
 		// Handle both Paging and DownlinkNASTransport (which seem to have the same internal type)
-		log.Printf("DEBUG: Paging case - procCode: %d (10=Paging, 11=DownlinkNASTransport)", procCode)
+		log.Printf("DEBUG: Paging case - procCode: %d (11=DownlinkNASTransport, 10=Paging)", procCode)
 		if procCode == 11 { // DownlinkNASTransport procedure code
 			log.Printf("DEBUG: Detected DownlinkNASTransport via Paging case - calling extractDownlinkNASTransportIEs")
 			ies = extractDownlinkNASTransportIEs(packet)
-		} else if procCode == 10 { // Paging procedure code
+		} else {
 			log.Printf("DEBUG: Detected Paging message - calling extractPagingIEs")
 			ies = extractPagingIEs(packet)
-		} else {
-			log.Printf("DEBUG: Unknown procedure code in Paging case: %d", procCode)
-			ies = extractPagingIEs(packet) // Default to Paging
 		}
 	case C.InitiatingMessage__value_PR_CellTrafficTrace:
+		log.Printf("DEBUG: Detected CellTrafficTrace - calling extractCellTrafficTraceIEs")
 		ies = extractCellTrafficTraceIEs(packet)
+	case C.InitiatingMessage__value_PR_TraceStart:
+		log.Printf("DEBUG: Detected TraceStart - calling extractTraceStartIEs")
+		ies = extractTraceStartIEs(packet)
+	case C.InitiatingMessage__value_PR_TraceFailureIndication:
+		log.Printf("DEBUG: Detected TraceFailureIndication")
+		ies = extractTraceFailureIndicationIEs(packet)
+	case C.InitiatingMessage__value_PR_DeactivateTrace:
+		log.Printf("DEBUG: Detected DeactivateTrace")
+		ies = extractDeactivateTraceIEs(packet)
+	case C.InitiatingMessage__value_PR_LocationReportingControl:
+		log.Printf("DEBUG: Detected LocationReportingControl")
+		ies = extractLocationReportingControlIEs(packet)
+	case C.InitiatingMessage__value_PR_LocationReportingFailureIndication:
+		log.Printf("DEBUG: Detected LocationReportingFailureIndication")
+		ies = extractLocationReportingFailureIndicationIEs(packet)
+	case C.InitiatingMessage__value_PR_LocationReport:
+		log.Printf("DEBUG: Detected LocationReport")
+		ies = extractLocationReportIEs(packet)
 	case C.InitiatingMessage__value_PR_UEContextReleaseRequest:
 		ies = extractUEContextReleaseRequestIEs(packet)
 	case C.InitiatingMessage__value_PR_E_RABSetupRequest:
@@ -842,9 +903,9 @@ func extractInitiatingMessageIEs(packet unsafe.Pointer, messageType int, procCod
 	case C.InitiatingMessage__value_PR_UECapabilityInfoIndication:
 		ies = extractUECapabilityInfoIndicationIEs(packet)
 	default:
-		// For unsupported message types, try generic extraction
+		// For unsupported message types, try enhanced extraction
 		log.Printf("DEBUG: extractInitiatingMessageIEs default case - msg.value.present: %d, messageType: %d, procCode: %d", msg.value.present, messageType, procCode)
-		ies = extractGenericIEs(packet, messageType)
+		ies = extractEnhancedIEs(packet, messageType, int(procCode))
 	}
 
 	return ies
@@ -959,20 +1020,13 @@ func extractInitialUEMessageIEs(packet unsafe.Pointer) []*InformationElement {
 			log.Printf("DEBUG: InitialUEMessage extracted NAS_PDU: %d bytes", nas_pdu.size)
 		case C.InitialUEMessage_IEs__value_PR_TAI:
 			tai := (*C.TAI_t)(unsafe.Pointer(&ie.value.choice[0]))
-			hexData := extractOctetString(&tai.pLMNidentity)
-			// TAC est un OCTET STRING de 2 bytes
-			if tai.tAC.size >= 2 {
-				tacBytes := C.GoBytes(unsafe.Pointer(tai.tAC.buf), C.int(tai.tAC.size))
-				tac := fmt.Sprintf("%04x", binary.BigEndian.Uint16(tacBytes))
-				ieStruct.Value = fmt.Sprintf("TAI(PLMN:%s, TAC:%s)", hexData[:6], tac)
-			} else {
-				ieStruct.Value = fmt.Sprintf("TAI(PLMN:%s, TAC:invalid)", hexData[:6])
-			}
-			ieStruct.RawValue = hexData
-			log.Printf("DEBUG: InitialUEMessage extracted TAI: %s", ieStruct.Value)
+			taiValue, taiRaw := extractTAI(unsafe.Pointer(tai))
+			ieStruct.Value = taiValue
+			ieStruct.RawValue = taiRaw
+			log.Printf("DEBUG: InitialUEMessage extracted TAI: %s (raw: %s)", taiValue, taiRaw)
 		case C.InitialUEMessage_IEs__value_PR_EUTRAN_CGI:
 			eutran_cgi := (*C.EUTRAN_CGI_t)(unsafe.Pointer(&ie.value.choice[0]))
-			plmnHex := extractOctetString(&eutran_cgi.pLMNidentity)
+			plmnHex := extractGenericOctetString(&eutran_cgi.pLMNidentity)
 			// Cell ID est un BIT STRING, pas un OCTET STRING
 			cellIdBytes := C.GoBytes(unsafe.Pointer(eutran_cgi.cell_ID.buf), C.int(eutran_cgi.cell_ID.size))
 			cellIdHex := fmt.Sprintf("%x", cellIdBytes)
@@ -988,10 +1042,24 @@ func extractInitialUEMessageIEs(packet unsafe.Pointer) []*InformationElement {
 			log.Printf("DEBUG: InitialUEMessage extracted RRC_Establishment_Cause: %s", ieStruct.Value)
 		case C.InitialUEMessage_IEs__value_PR_S_TMSI:
 			s_tmsi := (*C.S_TMSI_t)(unsafe.Pointer(&ie.value.choice[0]))
-			mmecHex := extractOctetString(&s_tmsi.mMEC)
-			mtmsiHex := extractOctetString(&s_tmsi.m_TMSI)
-			ieStruct.Value = fmt.Sprintf("S_TMSI(MMEC:%s, M-TMSI:%s)", mmecHex[:2], mtmsiHex[:8])
-			ieStruct.RawValue = mmecHex + mtmsiHex
+			mmecHex := extractGenericOctetString(&s_tmsi.mMEC)
+			mtmsiHex := extractGenericOctetString(&s_tmsi.m_TMSI)
+			
+			// Handle potential empty data
+			var mmecStr, mtmsiStr string
+			if len(mmecHex) >= 2 {
+				mmecStr = mmecHex[:2]
+			} else {
+				mmecStr = mmecHex
+			}
+			if len(mtmsiHex) >= 11 { // "xx xx xx xx" format = 11 chars
+				mtmsiStr = mtmsiHex[:11]
+			} else {
+				mtmsiStr = mtmsiHex
+			}
+			
+			ieStruct.Value = fmt.Sprintf("S_TMSI(MMEC:%s, M-TMSI:%s)", mmecStr, mtmsiStr)
+			ieStruct.RawValue = mmecHex + " " + mtmsiHex
 			log.Printf("DEBUG: InitialUEMessage extracted S_TMSI: %s", ieStruct.Value)
 		case C.InitialUEMessage_IEs__value_PR_GUMMEIType:
 			gummei_type := (*C.GUMMEIType_t)(unsafe.Pointer(&ie.value.choice[0]))
@@ -1137,43 +1205,68 @@ func extractUplinkNASTransportIEs(packet unsafe.Pointer) []*InformationElement {
 
 		log.Printf("DEBUG: UplinkNASTransport IE[%d] - ID: %d, Name: %s, Present: %d", i, ie.id, ieStruct.Name, ie.value.present)
 
-		// Use the value present enum instead of the ID, with correct pointer casting
-		switch ie.value.present {
-		case C.UplinkNASTransport_IEs__value_PR_MME_UE_S1AP_ID:
-			mme_id := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice[0]))
-			ieStruct.Value = int32(*mme_id)
-			ieStruct.RawValue = fmt.Sprintf("%d", int32(*mme_id))
-			log.Printf("DEBUG: UplinkNASTransport extracted MME_UE_S1AP_ID: %d", int32(*mme_id))
-		case C.UplinkNASTransport_IEs__value_PR_ENB_UE_S1AP_ID:
-			enb_id := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice[0]))
-			ieStruct.Value = int32(*enb_id)
-			ieStruct.RawValue = fmt.Sprintf("%d", int32(*enb_id))
-			log.Printf("DEBUG: UplinkNASTransport extracted eNB_UE_S1AP_ID: %d", int32(*enb_id))
-		case C.UplinkNASTransport_IEs__value_PR_NAS_PDU:
-			nas_pdu := (*C.NAS_PDU_t)(unsafe.Pointer(&ie.value.choice[0]))
-			hexData := extractOctetString(nas_pdu)
-			ieStruct.Value = fmt.Sprintf("NAS_PDU(%d bytes)", nas_pdu.size)
-			ieStruct.RawValue = hexData
-			log.Printf("DEBUG: UplinkNASTransport extracted NAS_PDU: %d bytes", nas_pdu.size)
-		case C.UplinkNASTransport_IEs__value_PR_EUTRAN_CGI:
-			eutran_cgi := (*C.EUTRAN_CGI_t)(unsafe.Pointer(&ie.value.choice[0]))
-			plmnHex := extractOctetString(&eutran_cgi.pLMNidentity)
-			cellIdBytes := C.GoBytes(unsafe.Pointer(eutran_cgi.cell_ID.buf), C.int(eutran_cgi.cell_ID.size))
-			cellIdHex := fmt.Sprintf("%x", cellIdBytes)
-			ieStruct.Value = fmt.Sprintf("EUTRAN_CGI(PLMN:%s, CellID:%s)", plmnHex[:6], cellIdHex[:8])
-			ieStruct.RawValue = plmnHex + cellIdHex
-			log.Printf("DEBUG: UplinkNASTransport extracted EUTRAN_CGI: %s", ieStruct.Value)
-		case C.UplinkNASTransport_IEs__value_PR_TAI:
-			tai := (*C.TAI_t)(unsafe.Pointer(&ie.value.choice[0]))
-			hexData := extractOctetString(&tai.pLMNidentity)
-			tacBytes := C.GoBytes(unsafe.Pointer(tai.tAC.buf), C.int(tai.tAC.size))
-			tac := fmt.Sprintf("%04x", binary.BigEndian.Uint16(tacBytes))
-			ieStruct.Value = fmt.Sprintf("TAI(PLMN:%s, TAC:%s)", hexData[:6], tac)
-			ieStruct.RawValue = hexData
-			log.Printf("DEBUG: UplinkNASTransport extracted TAI: %s", ieStruct.Value)
+		// Use ID-based switching with proper union member access
+		switch int(ie.id) {
+		case 0: // id_MME_UE_S1AP_ID
+			if ie.value.present == C.UplinkNASTransport_IEs__value_PR_MME_UE_S1AP_ID {
+				mme_id := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice[0]))
+				ieStruct.Value = int32(*mme_id)
+				ieStruct.RawValue = fmt.Sprintf("%d", int32(*mme_id))
+				log.Printf("DEBUG: UplinkNASTransport extracted MME_UE_S1AP_ID: %d", int32(*mme_id))
+			} else {
+				ieStruct.Value = "Extraction Error"
+				ieStruct.RawValue = fmt.Sprintf("Expected PR_MME_UE_S1AP_ID(%d), got %d", C.UplinkNASTransport_IEs__value_PR_MME_UE_S1AP_ID, ie.value.present)
+			}
+		case 8: // id_eNB_UE_S1AP_ID
+			if ie.value.present == C.UplinkNASTransport_IEs__value_PR_ENB_UE_S1AP_ID {
+				enb_id := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice[0]))
+				ieStruct.Value = int32(*enb_id)
+				ieStruct.RawValue = fmt.Sprintf("%d", int32(*enb_id))
+				log.Printf("DEBUG: UplinkNASTransport extracted eNB_UE_S1AP_ID: %d", int32(*enb_id))
+			} else {
+				ieStruct.Value = "Extraction Error"
+				ieStruct.RawValue = fmt.Sprintf("Expected PR_ENB_UE_S1AP_ID(%d), got %d", C.UplinkNASTransport_IEs__value_PR_ENB_UE_S1AP_ID, ie.value.present)
+			}
+		case 26: // id_NAS_PDU
+			if ie.value.present == C.UplinkNASTransport_IEs__value_PR_NAS_PDU {
+				nas_pdu := (*C.NAS_PDU_t)(unsafe.Pointer(&ie.value.choice[0]))
+				hexData := extractOctetString(nas_pdu)
+				ieStruct.Value = fmt.Sprintf("NAS_PDU(%d bytes)", nas_pdu.size)
+				ieStruct.RawValue = hexData
+				log.Printf("DEBUG: UplinkNASTransport extracted NAS_PDU: %d bytes", nas_pdu.size)
+			} else {
+				ieStruct.Value = "Extraction Error"
+				ieStruct.RawValue = fmt.Sprintf("Expected PR_NAS_PDU(%d), got %d", C.UplinkNASTransport_IEs__value_PR_NAS_PDU, ie.value.present)
+			}
+		case 100: // id_EUTRAN_CGI
+			if ie.value.present == C.UplinkNASTransport_IEs__value_PR_EUTRAN_CGI {
+				eutran_cgi := (*C.EUTRAN_CGI_t)(unsafe.Pointer(&ie.value.choice[0]))
+				// Utiliser extractGenericOctetString pour pLMNidentity
+				plmnHex := extractGenericOctetString(&eutran_cgi.pLMNidentity)
+				cellIdBytes := C.GoBytes(unsafe.Pointer(eutran_cgi.cell_ID.buf), C.int(eutran_cgi.cell_ID.size))
+				cellIdHex := fmt.Sprintf("%x", cellIdBytes)
+				ieStruct.Value = fmt.Sprintf("EUTRAN_CGI(PLMN:%s, CellID:%s)", plmnHex[:6], cellIdHex[:8])
+				ieStruct.RawValue = plmnHex + cellIdHex
+				log.Printf("DEBUG: UplinkNASTransport extracted EUTRAN_CGI: %s", ieStruct.Value)
+			} else {
+				ieStruct.Value = "Extraction Error"
+				ieStruct.RawValue = fmt.Sprintf("Expected PR_EUTRAN_CGI(%d), got %d", C.UplinkNASTransport_IEs__value_PR_EUTRAN_CGI, ie.value.present)
+			}
+		case 67: // id_TAI
+			if ie.value.present == C.UplinkNASTransport_IEs__value_PR_TAI {
+				tai := (*C.TAI_t)(unsafe.Pointer(&ie.value.choice[0]))
+				// Utiliser notre fonction extractTAI améliorée
+				taiValue, taiRaw := extractTAI(unsafe.Pointer(tai))
+				ieStruct.Value = taiValue
+				ieStruct.RawValue = taiRaw
+				log.Printf("DEBUG: UplinkNASTransport extracted TAI: %s (raw: %s)", taiValue, taiRaw)
+			} else {
+				ieStruct.Value = "Extraction Error"
+				ieStruct.RawValue = fmt.Sprintf("Expected PR_TAI(%d), got %d", C.UplinkNASTransport_IEs__value_PR_TAI, ie.value.present)
+			}
 		default:
-			ieStruct.Value = "Unknown"
-			ieStruct.RawValue = fmt.Sprintf("IE_%d present (PR=%d)", ie.id, ie.value.present)
+			ieStruct.Value = "Unknown IE"
+			ieStruct.RawValue = fmt.Sprintf("IE_ID_%d present_type=%d", ie.id, ie.value.present)
 			log.Printf("DEBUG: UplinkNASTransport unknown IE ID: %d, present: %d", ie.id, ie.value.present)
 		}
 
@@ -1498,6 +1591,8 @@ func extractPagingIEs(packet unsafe.Pointer) []*InformationElement {
 	slice.Len = (int)(val.protocolIEs.list.count)
 	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
 
+	log.Printf("DEBUG: Paging IE count: %d", len(ies))
+
 	for _, ie := range ies {
 		ieStruct := &InformationElement{
 			ID:          int(ie.id),
@@ -1505,54 +1600,248 @@ func extractPagingIEs(packet unsafe.Pointer) []*InformationElement {
 			Criticality: getCriticalityString(int(ie.criticality)),
 		}
 
+		log.Printf("DEBUG: Processing Paging IE - ID: %d, Name: %s", ie.id, ieStruct.Name)
+
 		switch ie.id {
 		case C.ProtocolIE_ID_id_UEIdentityIndexValue:
-			// Extract UE Identity Index Value with decimal conversion
+			// Extract UE Identity Index Value (10-bit value)
 			bitString := (*C.BIT_STRING_t)(unsafe.Pointer(&ie.value.choice))
 			if bitString.buf != nil && bitString.size > 0 {
 				data := C.GoBytes(unsafe.Pointer(bitString.buf), C.int(bitString.size))
 				hexStr := hex.EncodeToString(data)
-				// Calculate decimal value (10-bit)
+				
+				// Calculate decimal value from 10-bit field
+				var value uint16 = 0
 				if len(data) >= 2 {
-					value := (uint16(data[0]) << 2) | (uint16(data[1]) >> 6)
+					// Extract 10 bits (most significant bits of first two bytes)
+					value = (uint16(data[0]) << 2) | (uint16(data[1]) >> 6)
 					ieStruct.Value = value
-					ieStruct.RawValue = fmt.Sprintf("%s [decimal=%d]", hexStr, value)
+					ieStruct.RawValue = fmt.Sprintf("0x%s [decimal=%d, bits=%010b]", hexStr, value, value)
+				} else if len(data) == 1 {
+					value = uint16(data[0]) >> 6 // Only 2 bits if single byte
+					ieStruct.Value = value
+					ieStruct.RawValue = fmt.Sprintf("0x%s [decimal=%d]", hexStr, value)
 				} else {
 					ieStruct.Value = hexStr
-					ieStruct.RawValue = hexStr
+					ieStruct.RawValue = "0x" + hexStr
 				}
+				log.Printf("DEBUG: UEIdentityIndexValue - hex: %s, decimal: %d", hexStr, value)
+			} else {
+				ieStruct.Value = "Invalid"
+				ieStruct.RawValue = "Empty or null buffer"
 			}
+
 		case C.ProtocolIE_ID_id_UEPagingID:
-			// Extract UE Paging ID - simplified for now
-			ieStruct.Value = "UE Paging ID present"
-			ieStruct.RawValue = "Detailed UE Paging ID extraction"
+			// Extract UE Paging ID (S-TMSI or IMSI) with detailed decoding
+			pagingID := (*C.UEPagingID_t)(unsafe.Pointer(&ie.value.choice))
+			switch pagingID.present {
+			case C.UEPagingID_PR_s_TMSI:
+				// Extract S-TMSI with detailed MMEC and M-TMSI decoding
+				// Note: In UEPagingID, s_TMSI is a pointer unlike in InitialUEMessage
+				// Dereference the pointer to get the actual S-TMSI structure
+				s_tmsi := *(**C.S_TMSI_t)(unsafe.Pointer(&pagingID.choice[0]))
+				if s_tmsi != nil {
+					mmecHex := extractGenericOctetString(&s_tmsi.mMEC)
+					mtmsiHex := extractGenericOctetString(&s_tmsi.m_TMSI)
+					
+					// Handle potential empty data
+					var mmecStr, mtmsiStr string
+					if len(mmecHex) >= 2 {
+						mmecStr = mmecHex[:2]
+					} else {
+						mmecStr = mmecHex
+					}
+					if len(mtmsiHex) >= 11 { // "xx xx xx xx" format = 11 chars
+						mtmsiStr = mtmsiHex[:11]
+					} else {
+						mtmsiStr = mtmsiHex
+					}
+					
+					ieStruct.Value = fmt.Sprintf("S_TMSI(MMEC:%s, M-TMSI:%s)", mmecStr, mtmsiStr)
+					ieStruct.RawValue = mmecHex + " " + mtmsiHex
+					log.Printf("DEBUG: UEPagingID - S-TMSI decoded: MMEC=%s, M-TMSI=%s", mmecStr, mtmsiStr)
+				} else {
+					ieStruct.Value = "S-TMSI(null)"
+					ieStruct.RawValue = "S-TMSI pointer is null"
+					log.Printf("DEBUG: UEPagingID - S-TMSI pointer is null")
+				}
+			case C.UEPagingID_PR_iMSI:
+				// Extract IMSI with BCD decoding
+				imsi_ptr := (*C.IMSI_t)(unsafe.Pointer(&pagingID.choice[0]))
+				if imsi_ptr.buf != nil && imsi_ptr.size > 0 {
+					imsiData := C.GoBytes(unsafe.Pointer(imsi_ptr.buf), C.int(imsi_ptr.size))
+					imsiStr := decodeIMSI(imsiData)
+					ieStruct.Value = fmt.Sprintf("IMSI(%s)", imsiStr)
+					ieStruct.RawValue = hex.EncodeToString(imsiData)
+					log.Printf("DEBUG: UEPagingID - IMSI decoded: %s", imsiStr)
+				} else {
+					ieStruct.Value = "IMSI(Invalid)"
+					ieStruct.RawValue = "Empty IMSI buffer"
+				}
+			default:
+				ieStruct.Value = "Unknown"
+				ieStruct.RawValue = fmt.Sprintf("UEPagingID type %d", pagingID.present)
+			}
+
 		case C.ProtocolIE_ID_id_CNDomain:
 			// Extract CN Domain
 			cnDomain := (*C.CNDomain_t)(unsafe.Pointer(&ie.value.choice))
 			domainStr := "Unknown"
-			if *cnDomain == C.CNDomain_ps {
+			switch *cnDomain {
+			case C.CNDomain_ps:
 				domainStr = "PS (Packet Switched)"
-			} else if *cnDomain == C.CNDomain_cs {
+			case C.CNDomain_cs:
 				domainStr = "CS (Circuit Switched)"
+			default:
+				domainStr = fmt.Sprintf("Unknown (%d)", int(*cnDomain))
 			}
 			ieStruct.Value = domainStr
 			ieStruct.RawValue = fmt.Sprintf("%d", int(*cnDomain))
+			log.Printf("DEBUG: CNDomain: %s", domainStr)
+
 		case C.ProtocolIE_ID_id_TAIList:
-			// Extract TAI List - simplified for now
-			ieStruct.Value = "TAI List present"
-			ieStruct.RawValue = "Detailed TAI List extraction"
+			// Extract TAI List avec notre fonction améliorée
+			taiList := (*C.TAIList_t)(unsafe.Pointer(&ie.value.choice))
+			taiValue, taiRaw := extractTAIList(unsafe.Pointer(taiList))
+			ieStruct.Value = taiValue
+			ieStruct.RawValue = taiRaw
+			log.Printf("DEBUG: TAIList decoded: %s (raw: %s)", taiValue, taiRaw)
+
+		case C.ProtocolIE_ID_id_pagingDRX:
+			// Extract Paging DRX
+			pagingDRX := (*C.PagingDRX_t)(unsafe.Pointer(&ie.value.choice))
+			var drxStr string
+			switch *pagingDRX {
+			case C.PagingDRX_v32:
+				drxStr = "v32 (32 subframes)"
+			case C.PagingDRX_v64:
+				drxStr = "v64 (64 subframes)"
+			case C.PagingDRX_v128:
+				drxStr = "v128 (128 subframes)"
+			case C.PagingDRX_v256:
+				drxStr = "v256 (256 subframes)"
+			default:
+				drxStr = fmt.Sprintf("Unknown (%d)", int(*pagingDRX))
+			}
+			ieStruct.Value = drxStr
+			ieStruct.RawValue = fmt.Sprintf("%d", int(*pagingDRX))
+
+		case C.ProtocolIE_ID_id_PagingPriority:
+			// Extract Paging Priority
+			priority := (*C.PagingPriority_t)(unsafe.Pointer(&ie.value.choice))
+			var priorityStr string
+			switch *priority {
+			case C.PagingPriority_priolevel1:
+				priorityStr = "Level 1 (Highest)"
+			case C.PagingPriority_priolevel2:
+				priorityStr = "Level 2"
+			case C.PagingPriority_priolevel3:
+				priorityStr = "Level 3"
+			case C.PagingPriority_priolevel4:
+				priorityStr = "Level 4"
+			case C.PagingPriority_priolevel5:
+				priorityStr = "Level 5"
+			case C.PagingPriority_priolevel6:
+				priorityStr = "Level 6"
+			case C.PagingPriority_priolevel7:
+				priorityStr = "Level 7"
+			case C.PagingPriority_priolevel8:
+				priorityStr = "Level 8 (Lowest)"
+			default:
+				priorityStr = fmt.Sprintf("Unknown (%d)", int(*priority))
+			}
+			ieStruct.Value = priorityStr
+			ieStruct.RawValue = fmt.Sprintf("%d", int(*priority))
+
+		case 231: // C.ProtocolIE_ID_id_extended_UEIdentityIndexValue
+			// Extract Extended UE Identity Index Value (14-bit value for NB-IoT)
+			bitString := (*C.BIT_STRING_t)(unsafe.Pointer(&ie.value.choice))
+			if bitString.buf != nil && bitString.size > 0 {
+				data := C.GoBytes(unsafe.Pointer(bitString.buf), C.int(bitString.size))
+				hexStr := hex.EncodeToString(data)
+				
+				// Calculate decimal value from 14-bit field for NB-IoT
+				var value uint16 = 0
+				if len(data) >= 2 {
+					// Extract 14 bits from the data
+					value = (uint16(data[0]) << 6) | (uint16(data[1]) >> 2)
+					ieStruct.Value = value
+					ieStruct.RawValue = fmt.Sprintf("0x%s [decimal=%d, bits=%014b]", hexStr, value, value)
+				} else if len(data) == 1 {
+					value = uint16(data[0]) >> 2 // Only 6 bits if single byte
+					ieStruct.Value = value
+					ieStruct.RawValue = fmt.Sprintf("0x%s [decimal=%d]", hexStr, value)
+				} else {
+					ieStruct.Value = hexStr
+					ieStruct.RawValue = "0x" + hexStr
+				}
+				log.Printf("DEBUG: Extended UEIdentityIndexValue - hex: %s, decimal: %d (14-bit)", hexStr, value)
+			} else {
+				ieStruct.Value = "Invalid"
+				ieStruct.RawValue = "Empty or null buffer"
+			}
+
+		case C.ProtocolIE_ID_id_Paging_eDRXInformation:
+			// Extract Paging eDRX Information
+			ieStruct.Value = "Paging eDRX Information"
+			ieStruct.RawValue = "eDRX Information present"
+			log.Printf("DEBUG: Paging eDRX Information detected")
+
+		case C.ProtocolIE_ID_id_NB_IoT_DefaultPagingDRX:
+			// Extract NB-IoT Default Paging DRX
+			ieStruct.Value = "NB-IoT Default Paging DRX"
+			ieStruct.RawValue = "NB-IoT DRX present"
+			log.Printf("DEBUG: NB-IoT Default Paging DRX detected")
+
+		case C.ProtocolIE_ID_id_NB_IoT_Paging_eDRXInformation:
+			// Extract NB-IoT Paging eDRX Information
+			ieStruct.Value = "NB-IoT Paging eDRX Information"
+			ieStruct.RawValue = "NB-IoT eDRX Information present"
+			log.Printf("DEBUG: NB-IoT Paging eDRX Information detected")
+
+		case 244: // C.ProtocolIE_ID_id_NB_IoT_UEIdentityIndexValue
+			// Extract NB-IoT UE Identity Index Value
+			bitString := (*C.BIT_STRING_t)(unsafe.Pointer(&ie.value.choice))
+			if bitString.buf != nil && bitString.size > 0 {
+				data := C.GoBytes(unsafe.Pointer(bitString.buf), C.int(bitString.size))
+				hexStr := hex.EncodeToString(data)
+				
+				// Calculate decimal value - NB-IoT specific
+				var value uint16 = 0
+				if len(data) >= 2 {
+					value = binary.BigEndian.Uint16(data)
+					ieStruct.Value = value
+					ieStruct.RawValue = fmt.Sprintf("0x%s [decimal=%d, NB-IoT]", hexStr, value)
+				} else if len(data) == 1 {
+					value = uint16(data[0])
+					ieStruct.Value = value
+					ieStruct.RawValue = fmt.Sprintf("0x%s [decimal=%d, NB-IoT]", hexStr, value)
+				} else {
+					ieStruct.Value = hexStr
+					ieStruct.RawValue = "0x" + hexStr
+				}
+				log.Printf("DEBUG: NB-IoT UEIdentityIndexValue - hex: %s, decimal: %d", hexStr, value)
+			} else {
+				ieStruct.Value = "Invalid"
+				ieStruct.RawValue = "Empty or null buffer"
+			}
+
 		default:
-			ieStruct.Value = "Unknown"
+			// Try generic extraction for unknown IEs
+			ieStruct.Value = "Unknown IE"
 			ieStruct.RawValue = fmt.Sprintf("IE_%d present", ie.id)
+			log.Printf("DEBUG: Unknown Paging IE - ID: %d", ie.id)
 		}
 
 		result = append(result, ieStruct)
 	}
 
+	log.Printf("DEBUG: Paging IE extraction completed - %d IEs extracted", len(result))
 	return result
 }
 
 func extractCellTrafficTraceIEs(packet unsafe.Pointer) []*InformationElement {
+	log.Printf("DEBUG: Enhanced CellTrafficTrace IE extraction started")
 	var result []*InformationElement
 
 	pdu := (*C.S1AP_PDU_t)(packet)
@@ -1565,6 +1854,8 @@ func extractCellTrafficTraceIEs(packet unsafe.Pointer) []*InformationElement {
 	slice.Len = (int)(val.protocolIEs.list.count)
 	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
 
+	log.Printf("DEBUG: CellTrafficTrace IE count: %d", len(ies))
+
 	for _, ie := range ies {
 		ieStruct := &InformationElement{
 			ID:          int(ie.id),
@@ -1572,64 +1863,130 @@ func extractCellTrafficTraceIEs(packet unsafe.Pointer) []*InformationElement {
 			Criticality: getCriticalityString(int(ie.criticality)),
 		}
 
+		log.Printf("DEBUG: Processing CellTrafficTrace IE - ID: %d, Name: %s", ie.id, ieStruct.Name)
+
 		switch ie.id {
 		case C.ProtocolIE_ID_id_MME_UE_S1AP_ID:
 			mme_id := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
 			ieStruct.Value = int32(*mme_id)
 			ieStruct.RawValue = fmt.Sprintf("%d", int32(*mme_id))
+			log.Printf("DEBUG: MME_UE_S1AP_ID: %d", int32(*mme_id))
+
 		case C.ProtocolIE_ID_id_eNB_UE_S1AP_ID:
 			enb_id := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
 			ieStruct.Value = int32(*enb_id)
 			ieStruct.RawValue = fmt.Sprintf("%d", int32(*enb_id))
+			log.Printf("DEBUG: eNB_UE_S1AP_ID: %d", int32(*enb_id))
+
 		case C.ProtocolIE_ID_id_E_UTRAN_Trace_ID:
-			// Extract E-UTRAN Trace ID - simplified
+			// Extract E-UTRAN Trace ID with detailed parsing
 			traceID := (*C.E_UTRAN_Trace_ID_t)(unsafe.Pointer(&ie.value.choice))
 			if traceID.buf != nil && traceID.size >= 8 {
 				data := C.GoBytes(unsafe.Pointer(traceID.buf), C.int(traceID.size))
 				hexStr := hex.EncodeToString(data)
 
-				// Decode PLMN (first 3 bytes)
-				mcc, mnc := decodePLMNIdentity(data[:3])
-
-				ieStruct.Value = hexStr
-				ieStruct.RawValue = fmt.Sprintf("MCC=%s, MNC=%s, Trace=%s", mcc, mnc, hexStr[6:])
-			}
-		case C.ProtocolIE_ID_id_EUTRAN_CGI:
-			// Extract EUTRAN CGI using new decoder
-			cgi_ptr := unsafe.Pointer(&ie.value.choice)
-			value, rawValue := extractEUTRANCGI(cgi_ptr)
-			ieStruct.Value = value
-			ieStruct.RawValue = rawValue
-		case C.ProtocolIE_ID_id_TraceCollectionEntityIPAddress:
-			// Extract Transport Layer Address (IP Address)
-			bitString := (*C.BIT_STRING_t)(unsafe.Pointer(&ie.value.choice))
-			if bitString.buf != nil && bitString.size > 0 {
-				data := C.GoBytes(unsafe.Pointer(bitString.buf), C.int(bitString.size))
-				hexStr := hex.EncodeToString(data)
-
-				if len(data) == 4 {
-					// IPv4 address
-					ip := fmt.Sprintf("%d.%d.%d.%d", data[0], data[1], data[2], data[3])
-					ieStruct.Value = ip
-					ieStruct.RawValue = fmt.Sprintf("%s [IPv4: %s]", hexStr, ip)
-				} else if len(data) == 16 {
-					// IPv6 address
-					ip := net.IP(data).String()
-					ieStruct.Value = ip
-					ieStruct.RawValue = fmt.Sprintf("%s [IPv6: %s]", hexStr, ip)
+				// Decode PLMN (first 3 bytes) and Trace ID (remaining 5 bytes)
+				if len(data) >= 8 {
+					mcc, mnc := decodePLMNIdentity(data[:3])
+					traceRef := hex.EncodeToString(data[3:])
+					
+					ieStruct.Value = hexStr
+					ieStruct.RawValue = fmt.Sprintf("PLMN: MCC=%s, MNC=%s, TraceRef=0x%s", mcc, mnc, traceRef)
+					log.Printf("DEBUG: E_UTRAN_Trace_ID: MCC=%s, MNC=%s, TraceRef=%s", mcc, mnc, traceRef)
 				} else {
 					ieStruct.Value = hexStr
-					ieStruct.RawValue = hexStr
+					ieStruct.RawValue = "0x" + hexStr
+				}
+			} else {
+				ieStruct.Value = "Invalid"
+				ieStruct.RawValue = "Empty or insufficient trace ID data"
+			}
+
+		case C.ProtocolIE_ID_id_EUTRAN_CGI:
+			// Extract EUTRAN CGI with detailed cell identification
+			cgi_ptr := unsafe.Pointer(&ie.value.choice)
+			cgi := (*C.EUTRAN_CGI_t)(cgi_ptr)
+			
+			var mcc, mnc, cellID string
+			
+			// Extract PLMN identity
+			if cgi.pLMNidentity.buf != nil && cgi.pLMNidentity.size >= 3 {
+				plmnData := C.GoBytes(unsafe.Pointer(cgi.pLMNidentity.buf), C.int(cgi.pLMNidentity.size))
+				mcc, mnc = decodePLMNIdentity(plmnData[:3])
+			}
+			
+			// Extract Cell Identity (28 bits)
+			if cgi.cell_ID.buf != nil && cgi.cell_ID.size >= 4 {
+				cellData := C.GoBytes(unsafe.Pointer(cgi.cell_ID.buf), C.int(cgi.cell_ID.size))
+				if len(cellData) >= 4 {
+					// Cell ID is 28 bits, extract eNB ID (20 bits) and Cell ID (8 bits)
+					cellValue := binary.BigEndian.Uint32(cellData) >> 4 // Remove padding bits
+					enbID := cellValue >> 8
+					cellLocal := cellValue & 0xFF
+					cellID = fmt.Sprintf("0x%07x [eNB=%d, Cell=%d]", cellValue, enbID, cellLocal)
 				}
 			}
+			
+			ieStruct.Value = fmt.Sprintf("CGI: MCC=%s, MNC=%s", mcc, mnc)
+			ieStruct.RawValue = fmt.Sprintf("EUTRAN-CGI: MCC=%s, MNC=%s, CellID=%s", mcc, mnc, cellID)
+			log.Printf("DEBUG: EUTRAN_CGI: MCC=%s, MNC=%s, CellID=%s", mcc, mnc, cellID)
+
+		case C.ProtocolIE_ID_id_TraceCollectionEntityIPAddress:
+			// Extract Trace Collection Entity IP Address
+			ipAddr := (*C.TransportLayerAddress_t)(unsafe.Pointer(&ie.value.choice))
+			if ipAddr.buf != nil && ipAddr.size > 0 {
+				data := C.GoBytes(unsafe.Pointer(ipAddr.buf), C.int(ipAddr.size))
+				
+				// Check if IPv4 (4 bytes) or IPv6 (16 bytes)
+				if len(data) >= 4 {
+					if len(data) == 4 {
+						ip := net.IP(data)
+						ieStruct.Value = ip.String()
+						ieStruct.RawValue = fmt.Sprintf("IPv4: %s", ip.String())
+					} else if len(data) >= 16 {
+						ip := net.IP(data[:16])
+						ieStruct.Value = ip.String()
+						ieStruct.RawValue = fmt.Sprintf("IPv6: %s", ip.String())
+					} else {
+						hexStr := hex.EncodeToString(data)
+						ieStruct.Value = hexStr
+						ieStruct.RawValue = "0x" + hexStr
+					}
+				} else {
+					ieStruct.Value = "Invalid IP"
+					ieStruct.RawValue = "Insufficient IP address data"
+				}
+			} else {
+				ieStruct.Value = "No IP"
+				ieStruct.RawValue = "Empty IP address"
+			}
+
+		case C.ProtocolIE_ID_id_PrivacyIndicator:
+			// Extract Privacy Indicator
+			privacy := (*C.PrivacyIndicator_t)(unsafe.Pointer(&ie.value.choice))
+			var privacyStr string
+			switch *privacy {
+			case C.PrivacyIndicator_immediate_MDT:
+				privacyStr = "Immediate MDT"
+			case C.PrivacyIndicator_logged_MDT:
+				privacyStr = "Logged MDT"
+			default:
+				privacyStr = fmt.Sprintf("Unknown (%d)", int(*privacy))
+			}
+			ieStruct.Value = privacyStr
+			ieStruct.RawValue = fmt.Sprintf("%d", int(*privacy))
+
 		default:
-			ieStruct.Value = "Unknown"
+			// Try generic extraction for unknown IEs
+			ieStruct.Value = "Unknown IE"
 			ieStruct.RawValue = fmt.Sprintf("IE_%d present", ie.id)
+			log.Printf("DEBUG: Unknown CellTrafficTrace IE - ID: %d", ie.id)
 		}
 
 		result = append(result, ieStruct)
 	}
 
+	log.Printf("DEBUG: CellTrafficTrace IE extraction completed - %d IEs extracted", len(result))
 	return result
 }
 
@@ -1779,7 +2136,34 @@ func getCriticalityString(criticality int) string {
 	}
 }
 
-// Helper function to extract octet string data
+// Helper function to extract octet string data from OCTET_STRING_t
+func extractGenericOctetString(octetString *C.OCTET_STRING_t) string {
+	if octetString.size == 0 {
+		return ""
+	}
+
+	var data []byte
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&data)))
+	slice.Cap = (int)(octetString.size)
+	slice.Len = (int)(octetString.size)
+	slice.Data = uintptr(unsafe.Pointer(octetString.buf))
+
+	result := ""
+	for i, b := range data {
+		if i > 0 {
+			result += " "
+		}
+		result += fmt.Sprintf("%02x", b)
+		if i >= 31 { // Limit output length
+			result += "..."
+			break
+		}
+	}
+
+	return result
+}
+
+// Helper function to extract octet string data (existing function for NAS_PDU_t)
 func extractOctetString(octetString *C.NAS_PDU_t) string {
 	if octetString.size == 0 {
 		return ""
@@ -2168,6 +2552,140 @@ func ExtractFallbackIEs(payload []byte, procedureCode int) []*InformationElement
 	return result
 }
 
+// ===== FONCTIONS UTILITAIRES POUR LE DÉCODAGE =====
+
+// decodeIMSI decodes IMSI from BCD format
+func decodeIMSI(data []byte) string {
+	if len(data) == 0 {
+		return "Invalid"
+	}
+	
+	var imsi strings.Builder
+	
+	// First digit is in the lower nibble of first byte
+	if len(data) > 0 {
+		firstDigit := data[0] & 0x0F
+		if firstDigit == 0x0F {
+			// Skip if padding
+		} else {
+			imsi.WriteString(fmt.Sprintf("%d", firstDigit))
+		}
+		
+		// Second digit is in upper nibble of first byte
+		secondDigit := (data[0] & 0xF0) >> 4
+		if secondDigit != 0x0F {
+			imsi.WriteString(fmt.Sprintf("%d", secondDigit))
+		}
+	}
+	
+	// Remaining digits are packed in BCD format
+	for i := 1; i < len(data); i++ {
+		lowNibble := data[i] & 0x0F
+		highNibble := (data[i] & 0xF0) >> 4
+		
+		if lowNibble != 0x0F {
+			imsi.WriteString(fmt.Sprintf("%d", lowNibble))
+		}
+		if highNibble != 0x0F {
+			imsi.WriteString(fmt.Sprintf("%d", highNibble))
+		}
+	}
+	
+	return imsi.String()
+}
+
+// Enhanced decoder for different message types
+func extractEnhancedIEs(packet unsafe.Pointer, messageType int, procedureCode int) []*InformationElement {
+	log.Printf("DEBUG: Enhanced IE extraction for messageType: %d, procedureCode: %d", messageType, procedureCode)
+	
+	// Map specific procedure codes to enhanced extractors
+	switch procedureCode {
+	case 10: // Paging
+		return extractPagingIEs(packet)
+	case 42: // CellTrafficTrace
+		return extractCellTrafficTraceIEs(packet)
+	case 37: // TraceStart
+		return extractTraceStartIEs(packet)
+	case 38: // TraceFailureIndication
+		return extractTraceFailureIndicationIEs(packet)
+	case 39: // DeactivateTrace
+		return extractDeactivateTraceIEs(packet)
+	case 40: // LocationReportingControl
+		return extractLocationReportingControlIEs(packet)
+	case 41: // LocationReportingFailureIndication
+		return extractLocationReportingFailureIndicationIEs(packet)
+	case 47: // LocationReport
+		return extractLocationReportIEs(packet)
+	default:
+		// Use generic extraction for unknown procedure codes
+		return extractGenericIEs(packet, messageType)
+	}
+}
+
+// New extractors for trace-related messages
+func extractTraceStartIEs(packet unsafe.Pointer) []*InformationElement {
+	var result []*InformationElement
+	log.Printf("DEBUG: Enhanced TraceStart IE extraction")
+	
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.InitiatingMessage_t)(unsafe.Pointer(&pdu.choice))
+	val := (*C.TraceStart_t)(unsafe.Pointer(&msg.value.choice))
+
+	var ies []*C.TraceStartIEs_t
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
+	slice.Cap = (int)(val.protocolIEs.list.count)
+	slice.Len = (int)(val.protocolIEs.list.count)
+	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+
+	for _, ie := range ies {
+		ieStruct := &InformationElement{
+			ID:          int(ie.id),
+			Name:        GetIEName(int(ie.id)),
+			Criticality: getCriticalityString(int(ie.criticality)),
+		}
+
+		switch ie.id {
+		case C.ProtocolIE_ID_id_MME_UE_S1AP_ID:
+			mme_id := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+			ieStruct.Value = int32(*mme_id)
+			ieStruct.RawValue = fmt.Sprintf("%d", int32(*mme_id))
+		case C.ProtocolIE_ID_id_eNB_UE_S1AP_ID:
+			enb_id := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+			ieStruct.Value = int32(*enb_id)
+			ieStruct.RawValue = fmt.Sprintf("%d", int32(*enb_id))
+		case C.ProtocolIE_ID_id_TraceActivation:
+			ieStruct.Value = "Trace Activation present"
+			ieStruct.RawValue = "TraceActivation structure"
+		default:
+			ieStruct.Value = "Unknown IE"
+			ieStruct.RawValue = fmt.Sprintf("IE_%d present", ie.id)
+		}
+		result = append(result, ieStruct)
+	}
+	
+	return result
+}
+
+func extractTraceFailureIndicationIEs(packet unsafe.Pointer) []*InformationElement {
+	return extractGenericIEs(packet, 38) // TraceFailureIndication
+}
+
+func extractDeactivateTraceIEs(packet unsafe.Pointer) []*InformationElement {
+	return extractGenericIEs(packet, 39) // DeactivateTrace
+}
+
+func extractLocationReportingControlIEs(packet unsafe.Pointer) []*InformationElement {
+	return extractGenericIEs(packet, 40) // LocationReportingControl
+}
+
+func extractLocationReportingFailureIndicationIEs(packet unsafe.Pointer) []*InformationElement {
+	return extractGenericIEs(packet, 41) // LocationReportingFailureIndication
+}
+
+func extractLocationReportIEs(packet unsafe.Pointer) []*InformationElement {
+	return extractGenericIEs(packet, 47) // LocationReport
+}
+
 // ===== FONCTIONS D'EXTRACTION SIMPLIFIÉES =====
 
 func extractERABSetupResponseIEs(packet unsafe.Pointer) []*InformationElement {
@@ -2333,6 +2851,7 @@ func getCriticality(criticality C.Criticality_t) int {
 // ===== FONCTIONS DE DÉCODAGE SPÉCIALISÉES POUR LES IEs =====
 
 // Fonction pour décoder TAI (Tracking Area Identity)
+// extractTAI extrait les informations TAI selon le format Wireshark/tshark
 func extractTAI(tai_ptr unsafe.Pointer) (string, string) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -2349,7 +2868,7 @@ func extractTAI(tai_ptr unsafe.Pointer) (string, string) {
 		return "TAI: null TAI struct", "null TAI struct"
 	}
 
-	// Extraire PLMN identity
+	// Extraire PLMN identity (TBCD-STRING)
 	var plmnData []byte
 	slice := (*reflect.SliceHeader)((unsafe.Pointer(&plmnData)))
 	slice.Cap = (int)(tai.pLMNidentity.size)
@@ -2362,11 +2881,11 @@ func extractTAI(tai_ptr unsafe.Pointer) (string, string) {
 
 	mcc, mnc := decodePLMNIdentity(plmnData)
 
-	// Extraire TAC
+	// Extraire TAC (OCTET_STRING, 2 bytes)
 	var tacData []byte
 	tacSlice := (*reflect.SliceHeader)((unsafe.Pointer(&tacData)))
 	tacSlice.Cap = (int)(tai.tAC.size)
-	tacSlice.Len = (int)(tai.tAC.size)
+	tacSlice.Len = (int)(tai.tAC.size) 
 	tacSlice.Data = uintptr(unsafe.Pointer(tai.tAC.buf))
 
 	var tac uint16
@@ -2374,10 +2893,122 @@ func extractTAI(tai_ptr unsafe.Pointer) (string, string) {
 		tac = uint16(tacData[0])<<8 | uint16(tacData[1])
 	}
 
-	value := fmt.Sprintf("TAI(MCC=%s,MNC=%s,TAC=%d)", mcc, mnc, tac)
-	rawValue := fmt.Sprintf("PLMN=%s,TAC=%04x", hex.EncodeToString(plmnData), tac)
+	// Format similaire à Wireshark: "PLMN Identity: MCC 605, MNC 01 (TAC: 0x0001)"
+	value := fmt.Sprintf("PLMN Identity: MCC %s, MNC %s (TAC: 0x%04x)", mcc, mnc, tac)
+	rawValue := fmt.Sprintf("plmn_id=%s tac=%04x", hex.EncodeToString(plmnData), tac)
 
 	return value, rawValue
+}
+
+// extractTAIItem extrait les informations d'un TAIItem
+func extractTAIItem(tai_item_ptr unsafe.Pointer) (string, string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("ERROR: extractTAIItem panicked: %v", r)
+		}
+	}()
+
+	if tai_item_ptr == nil {
+		return "TAIItem: null pointer", "null pointer"
+	}
+
+	taiItem := (*C.TAIItem_t)(tai_item_ptr)
+	if taiItem == nil {
+		return "TAIItem: null TAIItem struct", "null TAIItem struct"
+	}
+
+	// Extraire le TAI depuis TAIItem
+	taiValue, taiRaw := extractTAI(unsafe.Pointer(&taiItem.tAI))
+	
+	// Format: "TAI Item: [contenu TAI]"
+	value := fmt.Sprintf("TAI Item: %s", taiValue)
+	
+	return value, taiRaw
+}
+
+// extractTAIList extrait et decode une liste TAI complète
+func extractTAIList(tai_list_ptr unsafe.Pointer) (string, string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("ERROR: extractTAIList panicked: %v", r)
+		}
+	}()
+
+	if tai_list_ptr == nil {
+		return "TAIList: null pointer", "null pointer"
+	}
+
+	taiList := (*C.TAIList_t)(tai_list_ptr)
+	if taiList == nil {
+		return "TAIList: null TAIList struct", "null TAIList struct"
+	}
+
+	count := int(taiList.list.count)
+	if count == 0 {
+		return "TAIList: empty list", "count=0"
+	}
+
+	// Extraire les éléments de la liste TAIItemIEs
+	var taiItemIEs []*C.TAIItemIEs_t
+	slice := (*reflect.SliceHeader)(unsafe.Pointer(&taiItemIEs))
+	slice.Cap = count
+	slice.Len = count
+	slice.Data = uintptr(unsafe.Pointer(taiList.list.array))
+
+	var taiItems []string
+	var rawItems []string
+
+	for i, taiItemIE := range taiItemIEs {
+		if taiItemIE != nil {
+			// Vérifier le présent (should be TAIItemIEs__value_PR_TAIItem)
+			if taiItemIE.value.present == C.TAIItemIEs__value_PR_TAIItem {
+				// Accéder au TAIItem depuis le choice using byte array access
+				taiItemPtr := unsafe.Pointer(&taiItemIE.value.choice[0])
+				taiItem := (*C.TAIItem_t)(taiItemPtr)
+				
+				// Le TAIItem contient directement un TAI_t
+				taiValue, taiRaw := extractTAI(unsafe.Pointer(&taiItem.tAI))
+				
+				taiItems = append(taiItems, fmt.Sprintf("  Item[%d]: %s", i, taiValue))
+				rawItems = append(rawItems, fmt.Sprintf("item_%d={%s}", i, taiRaw))
+			} else {
+				log.Printf("WARNING: TAIItemIE %d has unexpected present value: %d", i, taiItemIE.value.present)
+				taiItems = append(taiItems, fmt.Sprintf("  Item[%d]: Invalid present value", i))
+			}
+		}
+	}
+
+	// Format similaire à Wireshark
+	value := fmt.Sprintf("TAI List (%d items):\n%s", count, strings.Join(taiItems, "\n"))
+	rawValue := fmt.Sprintf("count=%d %s", count, strings.Join(rawItems, " "))
+
+	return value, rawValue
+}
+
+// createTAIInformationElement crée un InformationElement pour TAI
+func createTAIInformationElement(ieID int, taiPtr unsafe.Pointer, criticality int) *InformationElement {
+	value, rawValue := extractTAI(taiPtr)
+	
+	return &InformationElement{
+		ID:          ieID,
+		Name:        GetIEName(ieID),
+		Criticality: getCriticalityString(criticality),
+		Value:       value,
+		RawValue:    rawValue,
+	}
+}
+
+// createTAIListInformationElement crée un InformationElement pour TAIList
+func createTAIListInformationElement(ieID int, taiListPtr unsafe.Pointer, criticality int) *InformationElement {
+	value, rawValue := extractTAIList(taiListPtr)
+	
+	return &InformationElement{
+		ID:          ieID,
+		Name:        GetIEName(ieID),
+		Criticality: getCriticalityString(criticality),
+		Value:       value,
+		RawValue:    rawValue,
+	}
 }
 
 // Fonction pour décoder EUTRAN-CGI (E-UTRAN Cell Global Identity)
