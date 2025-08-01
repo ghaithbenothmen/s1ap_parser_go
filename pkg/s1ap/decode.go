@@ -48,6 +48,16 @@ package s1ap
 // #include "S1SetupFailure.h"
 // #include "Global-ENB-ID.h"
 // #include "ENBname.h"
+// #include "ENBStatusTransfer.h"
+// #include "MMEStatusTransfer.h"
+// #include "ENB-StatusTransfer-TransparentContainer.h"
+// #include "Bearers-SubjectToStatusTransferList.h"
+// #include "Bearers-SubjectToStatusTransfer-Item.h"
+// #include "COUNTvalue.h"
+// #include "PDCP-SN.h"
+// #include "HFN.h"
+// #include "InitialContextSetupFailure.h"
+// #include "Cause.h"
 // #include "SupportedTAs.h"
 // #include "PagingDRX.h"
 // #include "MMEname.h"
@@ -955,6 +965,18 @@ func extractInitiatingMessageIEs(packet unsafe.Pointer, messageType int, procCod
 	if procCode == 17 { // S1Setup procedure code
 		log.Printf("DEBUG: Detected S1SetupRequest via procedure code 17 - calling extractS1SetupRequestIEs")
 		ies = extractS1SetupRequestIEs(packet)
+		return ies
+	}
+	
+	if procCode == 24 { // eNBStatusTransfer procedure code
+		log.Printf("DEBUG: Detected eNBStatusTransfer via procedure code 24 - calling extractENBStatusTransferIEs")
+		ies = extractENBStatusTransferIEs(packet)
+		return ies
+	}
+	
+	if procCode == 25 { // MMEStatusTransfer procedure code
+		log.Printf("DEBUG: Detected MMEStatusTransfer via procedure code 25 - calling extractMMEStatusTransferIEs")
+		ies = extractMMEStatusTransferIEs(packet)
 		return ies
 	}
 	
@@ -4435,7 +4457,254 @@ func extractUEContextModificationFailureIEs(packet unsafe.Pointer) []*Informatio
 // Stub replaced by comprehensive implementation above
 
 func extractInitialContextSetupFailureIEs(packet unsafe.Pointer) []*InformationElement {
-	return extractGenericIEs(packet, 10) // InitialContextSetupFailure
+	log.Printf("DEBUG: === Extracting InitialContextSetupFailure IEs ===")
+	
+	// Cast to S1AP_PDU_t first
+	pdu := (*C.S1AP_PDU_t)(packet)
+	if pdu == nil {
+		log.Printf("DEBUG: PDU pointer is null")
+		return []*InformationElement{}
+	}
+
+	// Check PDU type
+	if pdu.present != C.S1AP_PDU_PR_unsuccessfulOutcome {
+		log.Printf("DEBUG: PDU is not an UnsuccessfulOutcome")
+		return []*InformationElement{}
+	}
+
+	// Get the UnsuccessfulOutcome message
+	msg := *(**C.UnsuccessfulOutcome_t)(unsafe.Pointer(&pdu.choice))
+	if msg == nil {
+		log.Printf("DEBUG: UnsuccessfulOutcome pointer is null")
+		return []*InformationElement{}
+	}
+
+	// Check if it's an InitialContextSetupFailure
+	if msg.value.present != C.UnsuccessfulOutcome__value_PR_InitialContextSetupFailure {
+		log.Printf("DEBUG: UnsuccessfulOutcome is not InitialContextSetupFailure, present=%d", msg.value.present)
+		return []*InformationElement{}
+	}
+
+	// Cast to InitialContextSetupFailure_t 
+	failure := (*C.InitialContextSetupFailure_t)(unsafe.Pointer(&msg.value.choice))
+	if failure == nil {
+		log.Printf("DEBUG: InitialContextSetupFailure pointer is null")
+		return []*InformationElement{}
+	}
+
+	// Get the protocol IEs list
+	ies := failure.protocolIEs
+	log.Printf("DEBUG: Number of IEs in InitialContextSetupFailure: %d", int(ies.list.count))
+	
+	var informationElements []*InformationElement
+
+	// Iterate through each IE
+	for i := 0; i < int(ies.list.count); i++ {
+		iePtr := (**C.InitialContextSetupFailureIEs_t)(unsafe.Pointer(uintptr(unsafe.Pointer(ies.list.array)) + uintptr(i)*unsafe.Sizeof(uintptr(0))))
+		if iePtr == nil || *iePtr == nil {
+			log.Printf("DEBUG: IE %d is null", i)
+			continue
+		}
+
+		ie := *iePtr
+		log.Printf("DEBUG: IE %d: id=%d, criticality=%d, present=%d", i, int(ie.id), int(ie.criticality), int(ie.value.present))
+
+		ieStruct := &InformationElement{
+			ID:          int(ie.id),
+			Name:        GetIEName(int(ie.id)),
+			Criticality: getCriticalityString(int(ie.criticality)),
+		}
+
+		switch ie.value.present {
+		case C.InitialContextSetupFailureIEs__value_PR_MME_UE_S1AP_ID:
+			// Extract MME_UE_S1AP_ID
+			mme_ue_s1ap_id := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice[0]))
+			if mme_ue_s1ap_id != nil {
+				value := uint32(*mme_ue_s1ap_id)
+				ieStruct.Value = fmt.Sprintf("%d", value)
+				ieStruct.RawValue = fmt.Sprintf("%d", value)
+				log.Printf("DEBUG: InitialContextSetupFailure extracted MME_UE_S1AP_ID: %d", value)
+			}
+
+		case C.InitialContextSetupFailureIEs__value_PR_ENB_UE_S1AP_ID:
+			// Extract eNB_UE_S1AP_ID
+			enb_ue_s1ap_id := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice[0]))
+			if enb_ue_s1ap_id != nil {
+				value := uint32(*enb_ue_s1ap_id)
+				ieStruct.Value = fmt.Sprintf("%d", value)
+				ieStruct.RawValue = fmt.Sprintf("%d", value)
+				log.Printf("DEBUG: InitialContextSetupFailure extracted eNB_UE_S1AP_ID: %d", value)
+			}
+
+		case C.InitialContextSetupFailureIEs__value_PR_Cause:
+			// Extract Cause
+			cause := (*C.Cause_t)(unsafe.Pointer(&ie.value.choice[0]))
+			if cause != nil {
+				causeName := ""
+				causeValue := ""
+				causeDetail := ""
+				
+				switch cause.present {
+				case C.Cause_PR_radioNetwork:
+					causeName = "radioNetwork"
+					causeValueInt := int(*(*C.CauseRadioNetwork_t)(unsafe.Pointer(&cause.choice[0])))
+					causeValue = fmt.Sprintf("radioNetwork (%d)", causeValueInt)
+					
+					// Map the radio network cause value to its name
+					switch causeValueInt {
+					case 0:
+						causeDetail = "unspecified"
+					case 1:
+						causeDetail = "tx2relocoverall-expiry"
+					case 2:
+						causeDetail = "successful-handover"
+					case 3:
+						causeDetail = "release-due-to-eutran-generated-reason"
+					case 4:
+						causeDetail = "handover-cancelled"
+					case 5:
+						causeDetail = "partial-handover"
+					case 6:
+						causeDetail = "ho-failure-in-target-EPC-eNB-or-target-system"
+					case 7:
+						causeDetail = "ho-target-not-allowed"
+					case 8:
+						causeDetail = "tS1relocoverall-expiry"
+					case 9:
+						causeDetail = "tS1relocprep-expiry"
+					case 10:
+						causeDetail = "cell-not-available"
+					case 11:
+						causeDetail = "unknown-targetID"
+					case 12:
+						causeDetail = "no-radio-resources-available-in-target-cell"
+					case 13:
+						causeDetail = "unknown-mme-ue-s1ap-id"
+					case 14:
+						causeDetail = "unknown-enb-ue-s1ap-id"
+					case 15:
+						causeDetail = "unknown-pair-ue-s1ap-id"
+					case 16:
+						causeDetail = "handover-desirable-for-radio-reason"
+					case 17:
+						causeDetail = "time-critical-handover"
+					case 18:
+						causeDetail = "resource-optimisation-handover"
+					case 19:
+						causeDetail = "reduce-load-in-serving-cell"
+					case 20:
+						causeDetail = "user-inactivity"
+					case 21:
+						causeDetail = "radio-connection-with-ue-lost"
+					case 22:
+						causeDetail = "load-balancing-tau-required"
+					case 23:
+						causeDetail = "cs-fallback-triggered"
+					case 24:
+						causeDetail = "ue-not-available-for-ps-service"
+					case 25:
+						causeDetail = "radio-resources-not-available"
+					case 26:
+						causeDetail = "failure-in-radio-interface-procedure"
+					case 27:
+						causeDetail = "invalid-qos-combination"
+					case 28:
+						causeDetail = "interrat-redirection"
+					case 29:
+						causeDetail = "interaction-with-other-procedure"
+					case 30:
+						causeDetail = "unknown-E-RAB-ID"
+					case 31:
+						causeDetail = "multiple-E-RAB-ID-instances"
+					case 32:
+						causeDetail = "encryption-and-or-integrity-protection-algorithms-not-supported"
+					case 33:
+						causeDetail = "s1-intra-system-handover-triggered"
+					case 34:
+						causeDetail = "s1-inter-system-handover-triggered"
+					case 35:
+						causeDetail = "x2-handover-triggered"
+					case 36:
+						causeDetail = "redirection-towards-1xRTT"
+					case 37:
+						causeDetail = "not-supported-QCI-value"
+					case 38:
+						causeDetail = "invalid-CSG-Id"
+					case 39:
+						causeDetail = "release-due-to-pre-emption"
+					case 40:
+						causeDetail = "n26-interface-not-available"
+					case 41:
+						causeDetail = "insufficient-ue-capabilities"
+					case 42:
+						causeDetail = "maximum-bearer-pre-emption-rate-exceeded"
+					case 43:
+						causeDetail = "up-integrity-protection-not-possible"
+					default:
+						causeDetail = fmt.Sprintf("unknown-radio-network-cause-%d", causeValueInt)
+					}
+					
+					ieStruct.Value = fmt.Sprintf("Cause: %s\n    %s: %s (%d)", causeValue, causeName, causeDetail, causeValueInt)
+					ieStruct.RawValue = fmt.Sprintf("present=%d radioNetwork=%d (%s)", cause.present, causeValueInt, causeDetail)
+					
+				case C.Cause_PR_transport:
+					causeName = "transport"
+					causeValueInt := int(*(*C.CauseTransport_t)(unsafe.Pointer(&cause.choice[0])))
+					causeValue = fmt.Sprintf("transport (%d)", causeValueInt)
+					ieStruct.Value = fmt.Sprintf("Cause: %s", causeValue)
+					ieStruct.RawValue = fmt.Sprintf("present=%d transport=%d", cause.present, causeValueInt)
+					
+				case C.Cause_PR_nas:
+					causeName = "nas"
+					causeValueInt := int(*(*C.CauseNas_t)(unsafe.Pointer(&cause.choice[0])))
+					causeValue = fmt.Sprintf("nas (%d)", causeValueInt)
+					ieStruct.Value = fmt.Sprintf("Cause: %s", causeValue)
+					ieStruct.RawValue = fmt.Sprintf("present=%d nas=%d", cause.present, causeValueInt)
+					
+				case C.Cause_PR_protocol:
+					causeName = "protocol"
+					causeValueInt := int(*(*C.CauseProtocol_t)(unsafe.Pointer(&cause.choice[0])))
+					causeValue = fmt.Sprintf("protocol (%d)", causeValueInt)
+					ieStruct.Value = fmt.Sprintf("Cause: %s", causeValue)
+					ieStruct.RawValue = fmt.Sprintf("present=%d protocol=%d", cause.present, causeValueInt)
+					
+				case C.Cause_PR_misc:
+					causeName = "misc"
+					causeValueInt := int(*(*C.CauseMisc_t)(unsafe.Pointer(&cause.choice[0])))
+					causeValue = fmt.Sprintf("misc (%d)", causeValueInt)
+					ieStruct.Value = fmt.Sprintf("Cause: %s", causeValue)
+					ieStruct.RawValue = fmt.Sprintf("present=%d misc=%d", cause.present, causeValueInt)
+					
+				default:
+					causeValue = fmt.Sprintf("unknown cause type (%d)", cause.present)
+					ieStruct.Value = fmt.Sprintf("Cause: %s", causeValue)
+					ieStruct.RawValue = fmt.Sprintf("present=%d", cause.present)
+				}
+				
+				log.Printf("DEBUG: InitialContextSetupFailure extracted Cause: %s", causeValue)
+			}
+
+		case C.InitialContextSetupFailureIEs__value_PR_CriticalityDiagnostics:
+			// Extract CriticalityDiagnostics
+			criticality_diagnostics := (*C.CriticalityDiagnostics_t)(unsafe.Pointer(&ie.value.choice[0]))
+			if criticality_diagnostics != nil {
+				ieStruct.Value = "CriticalityDiagnostics (present)"
+				ieStruct.RawValue = "criticality_diagnostics_present"
+				log.Printf("DEBUG: InitialContextSetupFailure extracted CriticalityDiagnostics")
+			}
+
+		default:
+			// For unsupported IEs, show basic information
+			ieStruct.Value = fmt.Sprintf("Unsupported IE (present: %d)", ie.value.present)
+			ieStruct.RawValue = fmt.Sprintf("id=%d present=%d", ie.id, ie.value.present)
+			log.Printf("DEBUG: InitialContextSetupFailure unsupported IE - ID: %d, Present: %d", ie.id, ie.value.present)
+		}
+
+		informationElements = append(informationElements, ieStruct)
+	}
+
+	log.Printf("DEBUG: InitialContextSetupFailure extraction completed with %d IEs", len(informationElements))
+	return informationElements
 }
 
 func extractERABSetupFailureIEs(packet unsafe.Pointer) []*InformationElement {
@@ -5152,4 +5421,264 @@ func extractPathSwitchRequestAcknowledgeIEs(packet unsafe.Pointer) []*Informatio
 
 	log.Printf("DEBUG: PathSwitchRequestAcknowledge extraction completed with %d IEs", len(result))
 	return result
+}
+
+// ===== eNBStatusTransfer EXTRACTION =====
+
+func extractENBStatusTransferIEs(packet unsafe.Pointer) []*InformationElement {
+	log.Printf("DEBUG: === Extracting eNBStatusTransfer IEs ===")
+	
+	// Cast to S1AP_PDU_t first
+	pdu := (*C.S1AP_PDU_t)(packet)
+	if pdu == nil {
+		log.Printf("DEBUG: PDU pointer is null")
+		return []*InformationElement{}
+	}
+
+	// Check PDU type
+	if pdu.present != C.S1AP_PDU_PR_initiatingMessage {
+		log.Printf("DEBUG: PDU is not an InitiatingMessage")
+		return []*InformationElement{}
+	}
+
+	// Get the InitiatingMessage
+	msg := *(**C.InitiatingMessage_t)(unsafe.Pointer(&pdu.choice))
+	if msg == nil {
+		log.Printf("DEBUG: InitiatingMessage pointer is null")
+		return []*InformationElement{}
+	}
+
+	// Cast to ENBStatusTransfer_t 
+	enbStatusTransfer := (*C.ENBStatusTransfer_t)(unsafe.Pointer(&msg.value.choice))
+	if enbStatusTransfer == nil {
+		log.Printf("DEBUG: ENBStatusTransfer pointer is null")
+		return []*InformationElement{}
+	}
+
+	// Get the protocol IEs list
+	ies := enbStatusTransfer.protocolIEs
+	log.Printf("DEBUG: Number of IEs in eNBStatusTransfer: %d", int(ies.list.count))
+	
+	var informationElements []*InformationElement
+
+	// Iterate through each IE
+	for i := 0; i < int(ies.list.count); i++ {
+		iePtr := (**C.ENBStatusTransferIEs_t)(unsafe.Pointer(uintptr(unsafe.Pointer(ies.list.array)) + uintptr(i)*unsafe.Sizeof(uintptr(0))))
+		if iePtr == nil || *iePtr == nil {
+			log.Printf("DEBUG: IE %d is null", i)
+			continue
+		}
+
+		ie := *iePtr
+		log.Printf("DEBUG: IE %d: id=%d, criticality=%d, present=%d", i, int(ie.id), int(ie.criticality), int(ie.value.present))
+
+		ieStruct := &InformationElement{
+			ID:          int(ie.id),
+			Name:        GetIEName(int(ie.id)),
+			Criticality: getCriticalityString(int(ie.criticality)),
+		}
+
+		switch ie.value.present {
+		case C.ENBStatusTransferIEs__value_PR_MME_UE_S1AP_ID:
+			// Extract MME_UE_S1AP_ID
+			mme_ue_s1ap_id := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+			if mme_ue_s1ap_id != nil {
+				value := uint32(*mme_ue_s1ap_id)
+				ieStruct.Value = fmt.Sprintf("%d", value)
+				ieStruct.RawValue = fmt.Sprintf("%d", value)
+				log.Printf("DEBUG: eNBStatusTransfer extracted MME_UE_S1AP_ID: %d", value)
+			}
+
+		case C.ENBStatusTransferIEs__value_PR_ENB_UE_S1AP_ID:
+			// Extract eNB_UE_S1AP_ID
+			enb_ue_s1ap_id := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+			if enb_ue_s1ap_id != nil {
+				value := uint32(*enb_ue_s1ap_id)
+				ieStruct.Value = fmt.Sprintf("%d", value)
+				ieStruct.RawValue = fmt.Sprintf("%d", value)
+				log.Printf("DEBUG: eNBStatusTransfer extracted eNB_UE_S1AP_ID: %d", value)
+			}
+
+		case C.ENBStatusTransferIEs__value_PR_ENB_StatusTransfer_TransparentContainer:
+			// Extract eNB-StatusTransfer-TransparentContainer
+			transparentContainer := (*C.ENB_StatusTransfer_TransparentContainer_t)(unsafe.Pointer(&ie.value.choice))
+			if transparentContainer != nil {
+				bearersList := transparentContainer.bearers_SubjectToStatusTransferList
+				bearersCount := int(bearersList.list.count)
+				log.Printf("DEBUG: eNBStatusTransfer bearers-SubjectToStatusTransferList: %d items", bearersCount)
+				
+				var bearersInfo []string
+				
+				// Iterate through each bearer item
+				for j := 0; j < bearersCount; j++ {
+					bearerItemPtr := (**C.Bearers_SubjectToStatusTransfer_ItemIEs_t)(unsafe.Pointer(uintptr(unsafe.Pointer(bearersList.list.array)) + uintptr(j)*unsafe.Sizeof(uintptr(0))))
+					if bearerItemPtr == nil || *bearerItemPtr == nil {
+						log.Printf("DEBUG: Bearer item %d is null", j)
+						continue
+					}
+					
+					bearerItem := *bearerItemPtr
+					log.Printf("DEBUG: Bearer item %d: id=%d, criticality=%d, present=%d", j, int(bearerItem.id), int(bearerItem.criticality), int(bearerItem.value.present))
+					
+					if bearerItem.value.present == C.Bearers_SubjectToStatusTransfer_ItemIEs__value_PR_Bearers_SubjectToStatusTransfer_Item {
+						bearerDetails := (*C.Bearers_SubjectToStatusTransfer_Item_t)(unsafe.Pointer(&bearerItem.value.choice))
+						if bearerDetails != nil {
+							erabID := int(bearerDetails.e_RAB_ID)
+							ulPDCP := int(bearerDetails.uL_COUNTvalue.pDCP_SN)
+							ulHFN := int(bearerDetails.uL_COUNTvalue.hFN)
+							dlPDCP := int(bearerDetails.dL_COUNTvalue.pDCP_SN)
+							dlHFN := int(bearerDetails.dL_COUNTvalue.hFN)
+							
+							bearerInfo := fmt.Sprintf("E-RAB-ID: %d, uL-COUNTvalue(pDCP-SN: %d, hFN: %d), dL-COUNTvalue(pDCP-SN: %d, hFN: %d)", 
+								erabID, ulPDCP, ulHFN, dlPDCP, dlHFN)
+							bearersInfo = append(bearersInfo, bearerInfo)
+							
+							log.Printf("DEBUG: Bearer %d - E-RAB-ID: %d, UL COUNT(PDCP-SN: %d, HFN: %d), DL COUNT(PDCP-SN: %d, HFN: %d)", 
+								j, erabID, ulPDCP, ulHFN, dlPDCP, dlHFN)
+						}
+					}
+				}
+				
+				ieStruct.Value = fmt.Sprintf("ENB-StatusTransfer-TransparentContainer (%d bearers)", bearersCount)
+				ieStruct.RawValue = fmt.Sprintf("bearers_count=%d items: [%s]", bearersCount, strings.Join(bearersInfo, "; "))
+				log.Printf("DEBUG: eNBStatusTransfer extracted TransparentContainer with %d bearers", bearersCount)
+			}
+
+		default:
+			// For unsupported IEs, show basic information
+			ieStruct.Value = fmt.Sprintf("Unsupported IE (present: %d)", ie.value.present)
+			ieStruct.RawValue = fmt.Sprintf("id=%d present=%d", ie.id, ie.value.present)
+			log.Printf("DEBUG: eNBStatusTransfer unsupported IE - ID: %d, Present: %d", ie.id, ie.value.present)
+		}
+
+		informationElements = append(informationElements, ieStruct)
+	}
+
+	log.Printf("DEBUG: eNBStatusTransfer extraction completed with %d IEs", len(informationElements))
+	return informationElements
+}
+
+// extractMMEStatusTransferIEs extracts information from MME Status Transfer message
+func extractMMEStatusTransferIEs(packet unsafe.Pointer) []*InformationElement {
+	var informationElements []*InformationElement
+	
+	log.Printf("=== MME Status Transfer Message ===")
+	
+	pdu := (*C.S1AP_PDU_t)(packet)
+	if pdu.present != C.S1AP_PDU_PR_initiatingMessage {
+		log.Printf("ERROR: Not an initiating message")
+		return informationElements
+	}
+
+	msg := *(**C.InitiatingMessage_t)(unsafe.Pointer(&pdu.choice))
+	
+	// Cast to MMEStatusTransfer_t
+	mmeStatusTransfer := (*C.MMEStatusTransfer_t)(unsafe.Pointer(&msg.value.choice))
+	
+	// Get the ProtocolIE container  
+	protocolIEs := (*C.ProtocolIE_Container_8143P56_t)(unsafe.Pointer(&mmeStatusTransfer.protocolIEs))
+	
+	// Iterate through IEs
+	ieCount := int(protocolIEs.list.count)
+	log.Printf("Processing %d IEs", ieCount)
+	
+	for i := 0; i < ieCount; i++ {
+		// Get IE pointer
+		iePtr := *(**C.MMEStatusTransferIEs_t)(unsafe.Pointer(uintptr(unsafe.Pointer(protocolIEs.list.array)) + uintptr(i)*unsafe.Sizeof(uintptr(0))))
+		
+		ieStruct := &InformationElement{
+			ID:         int(iePtr.id),
+			Criticality: getCriticalityString(int(iePtr.criticality)),
+			Name:       GetIEName(int(iePtr.id)),
+		}
+		
+		switch iePtr.value.present {
+		case C.MMEStatusTransferIEs__value_PR_MME_UE_S1AP_ID:
+			mmeUeS1apId := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&iePtr.value.choice))
+			ieStruct.Value = uint64(*mmeUeS1apId)
+			ieStruct.Name = "MME-UE-S1AP-ID"
+			ieStruct.RawValue = fmt.Sprintf("%d", uint64(*mmeUeS1apId))
+			log.Printf("MME-UE-S1AP-ID: %d", uint64(*mmeUeS1apId))
+			
+		case C.MMEStatusTransferIEs__value_PR_ENB_UE_S1AP_ID:
+			enbUeS1apId := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&iePtr.value.choice))
+			ieStruct.Value = uint32(*enbUeS1apId)
+			ieStruct.Name = "eNB-UE-S1AP-ID"
+			ieStruct.RawValue = fmt.Sprintf("%d", uint32(*enbUeS1apId))
+			log.Printf("eNB-UE-S1AP-ID: %d", uint32(*enbUeS1apId))
+			
+		case C.MMEStatusTransferIEs__value_PR_ENB_StatusTransfer_TransparentContainer:
+			log.Printf("=== eNB-StatusTransfer-TransparentContainer ===")
+			transparentContainer := (*C.ENB_StatusTransfer_TransparentContainer_t)(unsafe.Pointer(&iePtr.value.choice))
+			
+			ieStruct.Name = "eNB-StatusTransfer-TransparentContainer"
+			
+			// Extract bearer information
+			if transparentContainer.bearers_SubjectToStatusTransferList.list.count > 0 {
+				bearerCount := int(transparentContainer.bearers_SubjectToStatusTransferList.list.count)
+				log.Printf("Number of bearers subject to status transfer: %d", bearerCount)
+				
+				var bearerDetails []string
+				for j := 0; j < bearerCount; j++ {
+					// First access the ProtocolIE_SingleContainer (Bearers_SubjectToStatusTransfer_ItemIEs_t)
+					bearerItemPtr := (**C.Bearers_SubjectToStatusTransfer_ItemIEs_t)(unsafe.Pointer(
+						uintptr(unsafe.Pointer(transparentContainer.bearers_SubjectToStatusTransferList.list.array)) + 
+						uintptr(j)*unsafe.Sizeof(uintptr(0))))
+					
+					if bearerItemPtr == nil || *bearerItemPtr == nil {
+						log.Printf("DEBUG: MMEStatusTransfer Bearer item %d is null", j)
+						continue
+					}
+					
+					bearerItem := *bearerItemPtr
+					log.Printf("--- Bearer %d ---", j+1)
+					log.Printf("Bearer item: id=%d, criticality=%d, present=%d", int(bearerItem.id), int(bearerItem.criticality), int(bearerItem.value.present))
+					
+					// Now access the actual bearer details
+					if bearerItem.value.present == C.Bearers_SubjectToStatusTransfer_ItemIEs__value_PR_Bearers_SubjectToStatusTransfer_Item {
+						bearerPtr := (*C.Bearers_SubjectToStatusTransfer_Item_t)(unsafe.Pointer(&bearerItem.value.choice))
+						if bearerPtr != nil {
+							erabId := uint8(bearerPtr.e_RAB_ID)
+							log.Printf("E-RAB-ID: %d", erabId)
+							
+							bearerDetail := fmt.Sprintf("E-RAB-ID: %d", erabId)
+							
+							// Extract UL COUNT value
+							ulCount := &bearerPtr.uL_COUNTvalue
+							pdcpSN := uint16(ulCount.pDCP_SN)
+							hfn := uint32(ulCount.hFN)
+							log.Printf("UL COUNT value:")
+							log.Printf("  PDCP-SN: %d", pdcpSN)
+							log.Printf("  HFN: %d", hfn)
+							bearerDetail += fmt.Sprintf(", UL PDCP-SN: %d, UL HFN: %d", pdcpSN, hfn)
+							
+							// Extract DL COUNT value
+							dlCount := &bearerPtr.dL_COUNTvalue
+							pdcpSN = uint16(dlCount.pDCP_SN)
+							hfn = uint32(dlCount.hFN)
+							log.Printf("DL COUNT value:")
+							log.Printf("  PDCP-SN: %d", pdcpSN)
+							log.Printf("  HFN: %d", hfn)
+							bearerDetail += fmt.Sprintf(", DL PDCP-SN: %d, DL HFN: %d", pdcpSN, hfn)
+							
+							bearerDetails = append(bearerDetails, bearerDetail)
+						}
+					}
+				}
+				ieStruct.RawValue = fmt.Sprintf("Bearers: [%s]", strings.Join(bearerDetails, "; "))
+			} else {
+				ieStruct.RawValue = "No bearers"
+			}
+			
+		default:
+			ieStruct.Name = "Unknown"
+			ieStruct.RawValue = fmt.Sprintf("id=%d present=%d", iePtr.id, iePtr.value.present)
+			log.Printf("DEBUG: MMEStatusTransfer unsupported IE - ID: %d, Present: %d", iePtr.id, iePtr.value.present)
+		}
+
+		informationElements = append(informationElements, ieStruct)
+	}
+
+	log.Printf("DEBUG: MMEStatusTransfer extraction completed with %d IEs", len(informationElements))
+	return informationElements
 }
