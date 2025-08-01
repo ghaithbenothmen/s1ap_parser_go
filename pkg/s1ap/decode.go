@@ -3218,7 +3218,108 @@ func extractHandoverCommandIEs(packet unsafe.Pointer) []*InformationElement {
 
 // extractHandoverNotifyIEs extracts IEs from HandoverNotify
 func extractHandoverNotifyIEs(packet unsafe.Pointer) []*InformationElement {
-	return extractGenericIEs(packet, HANDOVER_NOTIFY) // Basic implementation
+	var result []*InformationElement
+
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.InitiatingMessage_t)(unsafe.Pointer(&pdu.choice))
+	val := (*C.HandoverNotify_t)(unsafe.Pointer(&msg.value.choice))
+
+	log.Printf("DEBUG: HandoverNotify extracting IEs, protocolIEs.list.count: %d", val.protocolIEs.list.count)
+
+	var ies []*C.HandoverNotifyIEs_t
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
+	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+	slice.Len = int(val.protocolIEs.list.count)
+	slice.Cap = int(val.protocolIEs.list.count)
+
+	for i, ie := range ies {
+		ieStruct := &InformationElement{
+			ID:          int(ie.id),
+			Name:        GetIEName(int(ie.id)),
+			Criticality: getCriticalityString(int(ie.criticality)),
+		}
+
+		log.Printf("DEBUG: HandoverNotify IE[%d] - ID: %d, Name: %s, Present: %d", i, ie.id, ieStruct.Name, ie.value.present)
+
+		switch ie.id {
+		case 0: // MME-UE-S1AP-ID
+			if ie.value.present == C.HandoverNotifyIEs__value_PR_MME_UE_S1AP_ID {
+				mmeUeS1apId := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+				ieStruct.Value = int(*mmeUeS1apId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *mmeUeS1apId)
+				log.Printf("DEBUG: HandoverNotify extracted MME_UE_S1AP_ID: %d", *mmeUeS1apId)
+			}
+
+		case 8: // eNB-UE-S1AP-ID
+			if ie.value.present == C.HandoverNotifyIEs__value_PR_ENB_UE_S1AP_ID {
+				enbUeS1apId := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+				ieStruct.Value = int(*enbUeS1apId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *enbUeS1apId)
+				log.Printf("DEBUG: HandoverNotify extracted eNB_UE_S1AP_ID: %d", *enbUeS1apId)
+			}
+
+		case 100: // EUTRAN-CGI
+			if ie.value.present == C.HandoverNotifyIEs__value_PR_EUTRAN_CGI {
+				eutranCgi := (*C.EUTRAN_CGI_t)(unsafe.Pointer(&ie.value.choice))
+				
+				// Extract PLMN Identity
+				plmnData := C.GoBytes(unsafe.Pointer(eutranCgi.pLMNidentity.buf), C.int(eutranCgi.pLMNidentity.size))
+				plmnHex := hex.EncodeToString(plmnData)
+				
+				// Extract Cell Identity
+				cellIdData := C.GoBytes(unsafe.Pointer(eutranCgi.cell_ID.buf), C.int(eutranCgi.cell_ID.size))
+				cellIdHex := hex.EncodeToString(cellIdData)
+				
+				// Decode MCC/MNC from PLMN
+				mcc, mnc := decodePLMNIdentity(plmnData)
+				
+				ieStruct.Value = fmt.Sprintf("EUTRAN_CGI(PLMN:%s, CellID:%s)", 
+					strings.ToUpper(plmnHex), strings.ToUpper(cellIdHex))
+				ieStruct.RawValue = fmt.Sprintf("plmn_id=%s cell_id=%s mcc=%s mnc=%s", 
+					plmnHex, cellIdHex, mcc, mnc)
+				log.Printf("DEBUG: HandoverNotify extracted EUTRAN_CGI: PLMN=%s, CellID=%s, MCC=%s, MNC=%s", 
+					plmnHex, cellIdHex, mcc, mnc)
+			}
+
+		case 67: // TAI
+			if ie.value.present == C.HandoverNotifyIEs__value_PR_TAI {
+				tai := (*C.TAI_t)(unsafe.Pointer(&ie.value.choice))
+				
+				// Extract PLMN Identity 
+				plmnData := C.GoBytes(unsafe.Pointer(tai.pLMNidentity.buf), C.int(tai.pLMNidentity.size))
+				plmnHex := hex.EncodeToString(plmnData)
+				
+				// Extract TAC
+				tacData := C.GoBytes(unsafe.Pointer(tai.tAC.buf), C.int(tai.tAC.size))
+				tacHex := hex.EncodeToString(tacData)
+				
+				// Convert TAC to decimal
+				var tacValue uint16
+				if len(tacData) >= 2 {
+					tacValue = binary.BigEndian.Uint16(tacData)
+				}
+				
+				// Decode MCC/MNC from PLMN
+				mcc, mnc := decodePLMNIdentity(plmnData)
+				
+				ieStruct.Value = fmt.Sprintf("PLMN Identity: MCC %s, MNC %s (TAC: 0x%s)", 
+					mcc, mnc, tacHex)
+				ieStruct.RawValue = fmt.Sprintf("plmn_id=%s tac=%s", plmnHex, tacHex)
+				log.Printf("DEBUG: HandoverNotify extracted TAI: PLMN=%s, TAC=0x%s (%d), MCC=%s, MNC=%s", 
+					plmnHex, tacHex, tacValue, mcc, mnc)
+			}
+
+		default:
+			ieStruct.Value = "Not implemented"
+			ieStruct.RawValue = fmt.Sprintf("IE ID %d not implemented", ie.id)
+			log.Printf("DEBUG: HandoverNotify IE ID %d not implemented", ie.id)
+		}
+
+		result = append(result, ieStruct)
+	}
+
+	log.Printf("DEBUG: HandoverNotify extraction completed with %d IEs", len(result))
+	return result
 }
 
 // extractHandoverCancelIEs extracts IEs from HandoverCancel  
