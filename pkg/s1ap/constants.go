@@ -41,7 +41,11 @@ const (
 	HANDOVER_FAILURE
 	HANDOVER_NOTIFICATION
 	HANDOVER_CANCEL
+	HANDOVER_CANCEL_ACKNOWLEDGE
 	HANDOVER_SUCCESS
+	HANDOVER_REQUIRED
+	HANDOVER_REQUEST
+	HANDOVER_NOTIFY
 	PATH_SWITCH_REQUEST
 	RESET
 	RESET_ACKNOWLEDGE
@@ -207,6 +211,18 @@ func GetMessageName(messageType int, procedureCode int, pduType string) string {
 		return "HandoverCommand"
 	case HANDOVER_REQUEST_ACKNOWLEDGE:
 		return "HandoverRequestAcknowledge"
+	case HANDOVER_REQUIRED:
+		return "HandoverRequired"
+	case HANDOVER_REQUEST:
+		return "HandoverRequest"
+	case HANDOVER_NOTIFY:
+		return "HandoverNotify"
+	case HANDOVER_CANCEL:
+		return "HandoverCancel"
+	case HANDOVER_CANCEL_ACKNOWLEDGE:
+		return "HandoverCancelAcknowledge"
+	case HANDOVER_SUCCESS:
+		return "HandoverSuccess"
 	case E_RAB_SETUP_RESPONSE:
 		return "E-RABSetupResponse"
 	case E_RAB_MODIFY_RESPONSE:

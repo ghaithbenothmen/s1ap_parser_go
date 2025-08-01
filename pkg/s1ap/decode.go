@@ -40,6 +40,33 @@ package s1ap
 // #include "UECapabilityInfoRequest.h"
 // #include "E-RAB-ID.h"
 // #include "Cause.h"
+// #include "S1SetupRequest.h"
+// #include "S1SetupResponse.h"
+// #include "S1SetupFailure.h"
+// #include "Global-ENB-ID.h"
+// #include "ENBname.h"
+// #include "SupportedTAs.h"
+// #include "PagingDRX.h"
+// #include "MMEname.h"
+// #include "ServedGUMMEIs.h"
+// #include "RelativeMMECapacity.h"
+// #include "TimeToWait.h"
+// #include "CriticalityDiagnostics.h"
+// #include "HandoverRequest.h"
+// #include "HandoverRequestAcknowledge.h"
+// #include "HandoverCommand.h"
+// #include "HandoverPreparationFailure.h"
+// #include "HandoverRequired.h"
+// #include "HandoverFailure.h"
+// #include "HandoverNotify.h"
+// #include "HandoverCancel.h"
+// #include "HandoverCancelAcknowledge.h"
+// #include "HandoverSuccess.h"
+// #include "E-RABAdmittedList.h"
+// #include "E-RABFailedtoSetupListHOReqAck.h"
+// #include "Target-ToSource-TransparentContainer.h"
+// #include "Source-ToTarget-TransparentContainer.h"
+// #include "HandoverType.h"
 // #include <stdio.h>
 // #include <stdlib.h>
 import "C"
@@ -891,6 +918,43 @@ func extractInitiatingMessageIEs(packet unsafe.Pointer, messageType int, procCod
 		return ies
 	}
 	
+	// Handover related procedure codes
+	if procCode == 0 { // HandoverPreparation
+		log.Printf("DEBUG: Detected HandoverRequired via procedure code 0 - calling extractHandoverRequiredIEs")
+		ies = extractHandoverRequiredIEs(packet)
+		return ies
+	}
+	
+	if procCode == 1 { // HandoverResourceAllocation
+		log.Printf("DEBUG: Detected HandoverRequest via procedure code 1 - calling extractHandoverRequestIEs")
+		ies = extractHandoverRequestIEs(packet)
+		return ies
+	}
+	
+	if procCode == 2 { // HandoverNotification
+		log.Printf("DEBUG: Detected HandoverNotify via procedure code 2 - calling extractHandoverNotifyIEs")
+		ies = extractHandoverNotifyIEs(packet)
+		return ies
+	}
+	
+	if procCode == 4 { // HandoverCancel
+		log.Printf("DEBUG: Detected HandoverCancel via procedure code 4 - calling extractHandoverCancelIEs")
+		ies = extractHandoverCancelIEs(packet)
+		return ies
+	}
+	
+	if procCode == 64 { // HandoverSuccess
+		log.Printf("DEBUG: Detected HandoverSuccess via procedure code 64 - calling extractHandoverSuccessIEs")
+		ies = extractHandoverSuccessIEs(packet)
+		return ies
+	}
+	
+	if procCode == 17 { // S1Setup procedure code
+		log.Printf("DEBUG: Detected S1SetupRequest via procedure code 17 - calling extractS1SetupRequestIEs")
+		ies = extractS1SetupRequestIEs(packet)
+		return ies
+	}
+	
 	switch msg.value.present {
 	case C.InitiatingMessage__value_PR_InitialUEMessage:
 		log.Printf("DEBUG: Detected InitialUEMessage - calling extractInitialUEMessageIEs")
@@ -999,6 +1063,12 @@ func extractSuccessfulOutcomeIEs(packet unsafe.Pointer, messageType int) []*Info
 		ies = extractInitialContextSetupResponseIEs(packet)
 	case 0: // HandoverPreparation
 		ies = extractHandoverCommandIEs(packet)
+	case 1: // HandoverResourceAllocation (HandoverRequestAcknowledge)
+		log.Printf("DEBUG: Calling extractHandoverRequestAcknowledgeIEs for procedure code 1")
+		ies = extractHandoverRequestAcknowledgeIEs(packet)
+	case 4: // HandoverCancel
+		log.Printf("DEBUG: Calling extractHandoverCancelAcknowledgeIEs for procedure code 4")
+		ies = extractHandoverCancelAcknowledgeIEs(packet)
 	default:
 		log.Printf("DEBUG: SuccessfulOutcome default case - procedure code: %d", msg.procedureCode)
 		// For unsupported successful outcome types, try generic extraction
@@ -1026,6 +1096,12 @@ func extractUnsuccessfulOutcomeIEs(packet unsafe.Pointer, messageType int) []*In
 		ies = extractInitialContextSetupFailureIEs(packet)
 	case C.UnsuccessfulOutcome__value_PR_UEContextModificationFailure:
 		ies = extractUEContextModificationFailureIEs(packet)
+	case C.UnsuccessfulOutcome__value_PR_HandoverPreparationFailure:
+		log.Printf("DEBUG: Calling extractHandoverPreparationFailureIEs")
+		ies = extractHandoverPreparationFailureIEs(packet)
+	case C.UnsuccessfulOutcome__value_PR_HandoverFailure:
+		log.Printf("DEBUG: Calling extractHandoverFailureIEs")
+		ies = extractHandoverFailureIEs(packet)
 	default:
 		// For unsupported unsuccessful outcome types, try generic extraction
 		ies = extractGenericIEs(packet, messageType)
@@ -1517,49 +1593,7 @@ func extractResetIEs(packet unsafe.Pointer) []*InformationElement {
 }
 
 // Helper function to extract IEs from S1SetupRequest
-func extractS1SetupRequestIEs(packet unsafe.Pointer) []*InformationElement {
-	var result []*InformationElement
-
-	pdu := (*C.S1AP_PDU_t)(packet)
-	msg := *(**C.InitiatingMessage_t)(unsafe.Pointer(&pdu.choice))
-	val := (*C.S1SetupRequest_t)(unsafe.Pointer(&msg.value.choice))
-
-	var ies []*C.S1SetupRequestIEs_t
-	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
-	slice.Cap = (int)(val.protocolIEs.list.count)
-	slice.Len = (int)(val.protocolIEs.list.count)
-	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
-
-	for _, ie := range ies {
-		ieStruct := &InformationElement{
-			ID:          int(ie.id),
-			Name:        GetIEName(int(ie.id)),
-			Criticality: getCriticalityString(int(ie.criticality)),
-		}
-
-		switch ie.id {
-		case C.ProtocolIE_ID_id_Global_ENB_ID:
-			ieStruct.Value = "Global_ENB_ID"
-			ieStruct.RawValue = "Global_ENB_ID present"
-		case C.ProtocolIE_ID_id_eNBname:
-			ieStruct.Value = "eNBname"
-			ieStruct.RawValue = "eNBname present"
-		case C.ProtocolIE_ID_id_SupportedTAs:
-			ieStruct.Value = "SupportedTAs"
-			ieStruct.RawValue = "SupportedTAs list present"
-		case C.ProtocolIE_ID_id_DefaultPagingDRX:
-			ieStruct.Value = "DefaultPagingDRX"
-			ieStruct.RawValue = "DefaultPagingDRX present"
-		default:
-			ieStruct.Value = "Unknown"
-			ieStruct.RawValue = fmt.Sprintf("IE_%d present", ie.id)
-		}
-
-		result = append(result, ieStruct)
-	}
-
-	return result
-}
+// Stub - actual implementation is below in the comprehensive functions
 
 // Helper function to extract IEs from DownlinkNASTransport
 func extractDownlinkNASTransportIEs(packet unsafe.Pointer) []*InformationElement {
@@ -2323,13 +2357,15 @@ func Decode(buf []byte) (unsafe.Pointer, int, error) {
 
 		// Handover procedures
 		case C.InitiatingMessage__value_PR_HandoverRequired:
-			typ = HANDOVER_PREPARATION
+			typ = HANDOVER_REQUIRED
 		case C.InitiatingMessage__value_PR_HandoverRequest:
-			typ = HANDOVER_RESOURCE_ALLOCATION
+			typ = HANDOVER_REQUEST  
 		case C.InitiatingMessage__value_PR_HandoverNotify:
-			typ = HANDOVER_NOTIFICATION
+			typ = HANDOVER_NOTIFY
 		case C.InitiatingMessage__value_PR_HandoverCancel:
 			typ = HANDOVER_CANCEL
+		case C.InitiatingMessage__value_PR_HandoverSuccess:
+			typ = HANDOVER_SUCCESS
 		case C.InitiatingMessage__value_PR_PathSwitchRequest:
 			typ = PATH_SWITCH_REQUEST
 
@@ -2450,6 +2486,8 @@ func Decode(buf []byte) (unsafe.Pointer, int, error) {
 			typ = HANDOVER_COMMAND
 		case 1: // HandoverResourceAllocation  
 			typ = HANDOVER_REQUEST_ACKNOWLEDGE
+		case 4: // HandoverCancel
+			typ = HANDOVER_CANCEL_ACKNOWLEDGE
 		case 5: // E-RABSetup
 			typ = E_RAB_SETUP_RESPONSE
 		case 6: // E-RABModify
@@ -2753,8 +2791,552 @@ func extractERABSetupResponseIEs(packet unsafe.Pointer) []*InformationElement {
 	return extractGenericIEs(packet, 5) // E-RABSetupResponse
 }
 
+// extractHandoverRequestAcknowledgeIEs extracts IEs from HandoverRequestAcknowledge
+func extractHandoverRequestAcknowledgeIEs(packet unsafe.Pointer) []*InformationElement {
+	var result []*InformationElement
+
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.SuccessfulOutcome_t)(unsafe.Pointer(&pdu.choice))
+	val := (*C.HandoverRequestAcknowledge_t)(unsafe.Pointer(&msg.value.choice))
+
+	log.Printf("DEBUG: HandoverRequestAcknowledge extracting IEs, protocolIEs.list.count: %d", val.protocolIEs.list.count)
+
+	var ies []*C.HandoverRequestAcknowledgeIEs_t
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
+	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+	slice.Len = int(val.protocolIEs.list.count)
+	slice.Cap = int(val.protocolIEs.list.count)
+
+	for i, ie := range ies {
+		ieStruct := &InformationElement{
+			ID:          int(ie.id),
+			Name:        GetIEName(int(ie.id)),
+			Criticality: getCriticalityString(int(ie.criticality)),
+		}
+
+		log.Printf("DEBUG: HandoverRequestAcknowledge IE[%d] - ID: %d, Name: %s, Present: %d", i, ie.id, ieStruct.Name, ie.value.present)
+
+		switch ie.id {
+		case 0: // MME-UE-S1AP-ID
+			if ie.value.present == C.HandoverRequestAcknowledgeIEs__value_PR_MME_UE_S1AP_ID {
+				mmeUeS1apId := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+				ieStruct.Value = int(*mmeUeS1apId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *mmeUeS1apId)
+			}
+
+		case 8: // eNB-UE-S1AP-ID
+			if ie.value.present == C.HandoverRequestAcknowledgeIEs__value_PR_ENB_UE_S1AP_ID {
+				enbUeS1apId := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+				ieStruct.Value = int(*enbUeS1apId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *enbUeS1apId)
+			}
+
+		case 18: // E-RABAdmittedList
+			if ie.value.present == C.HandoverRequestAcknowledgeIEs__value_PR_E_RABAdmittedList {
+				erabList := (*C.E_RABAdmittedList_t)(unsafe.Pointer(&ie.value.choice))
+				
+				// Extract basic information about the list
+				listCount := int(erabList.list.count)
+				
+				if listCount > 0 {
+					ieStruct.Value = fmt.Sprintf("E-RABAdmittedList (count: %d)", listCount)
+					ieStruct.RawValue = fmt.Sprintf("E-RAB admitted list with %d items", listCount)
+				} else {
+					ieStruct.Value = "E-RABAdmittedList (empty)"
+					ieStruct.RawValue = "E-RAB admitted list is empty"
+				}
+			}
+
+		case 19: // E-RABFailedToSetupListHOReqAck
+			if ie.value.present == C.HandoverRequestAcknowledgeIEs__value_PR_E_RABFailedtoSetupListHOReqAck {
+				ieStruct.Value = "E-RABFailedToSetupListHOReqAck"
+				ieStruct.RawValue = "E-RAB failed to setup list present"
+			}
+
+		case 123: // Target-ToSource-TransparentContainer
+			if ie.value.present == C.HandoverRequestAcknowledgeIEs__value_PR_Target_ToSource_TransparentContainer {
+				transparentContainer := (*C.Target_ToSource_TransparentContainer_t)(unsafe.Pointer(&ie.value.choice))
+				containerBytes := C.GoBytes(unsafe.Pointer(transparentContainer.buf), C.int(transparentContainer.size))
+				containerHex := fmt.Sprintf("%x", containerBytes)
+				
+				ieStruct.Value = fmt.Sprintf("Target-ToSource-TransparentContainer: %s", containerHex)
+				ieStruct.RawValue = containerHex
+			}
+
+		case 86: // CSG-Id
+			if ie.value.present == C.HandoverRequestAcknowledgeIEs__value_PR_CSG_Id {
+				ieStruct.Value = "CSG-Id"
+				ieStruct.RawValue = "CSG identifier present"
+			}
+
+		case 58: // CriticalityDiagnostics
+			if ie.value.present == C.HandoverRequestAcknowledgeIEs__value_PR_CriticalityDiagnostics {
+				ieStruct.Value = "CriticalityDiagnostics"
+				ieStruct.RawValue = "Criticality diagnostics information"
+			}
+
+		case 154: // CellAccessMode
+			if ie.value.present == C.HandoverRequestAcknowledgeIEs__value_PR_CellAccessMode {
+				ieStruct.Value = "CellAccessMode"
+				ieStruct.RawValue = "Cell access mode present"
+			}
+
+		default:
+			ieStruct.Value = fmt.Sprintf("Unsupported IE (present: %d)", ie.value.present)
+			ieStruct.RawValue = fmt.Sprintf("id=%d present=%d", ie.id, ie.value.present)
+		}
+
+		result = append(result, ieStruct)
+	}
+
+	log.Printf("DEBUG: HandoverRequestAcknowledge extraction completed with %d IEs", len(result))
+	return result
+}
+
 func extractHandoverRequiredIEs(packet unsafe.Pointer) []*InformationElement {
-	return extractGenericIEs(packet, 11) // HandoverRequired
+	var result []*InformationElement
+
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.InitiatingMessage_t)(unsafe.Pointer(&pdu.choice))
+	val := (*C.HandoverRequired_t)(unsafe.Pointer(&msg.value.choice))
+
+	log.Printf("DEBUG: HandoverRequired extracting IEs, protocolIEs.list.count: %d", val.protocolIEs.list.count)
+
+	var ies []*C.HandoverRequiredIEs_t
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
+	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+	slice.Len = int(val.protocolIEs.list.count)
+	slice.Cap = int(val.protocolIEs.list.count)
+
+	for i, ie := range ies {
+		ieStruct := &InformationElement{
+			ID:          int(ie.id),
+			Name:        GetIEName(int(ie.id)),
+			Criticality: getCriticalityString(int(ie.criticality)),
+		}
+
+		log.Printf("DEBUG: HandoverRequired IE[%d] - ID: %d, Name: %s, Present: %d", i, ie.id, ieStruct.Name, ie.value.present)
+
+		switch ie.id {
+		case 0: // MME-UE-S1AP-ID
+			if ie.value.present == C.HandoverRequiredIEs__value_PR_MME_UE_S1AP_ID {
+				mmeUeS1apId := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+				ieStruct.Value = int(*mmeUeS1apId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *mmeUeS1apId)
+			} else {
+				ieStruct.Value = "MME-UE-S1AP-ID (not decoded)"
+				ieStruct.RawValue = fmt.Sprintf("present=%d", ie.value.present)
+			}
+
+		case 8: // eNB-UE-S1AP-ID
+			if ie.value.present == C.HandoverRequiredIEs__value_PR_ENB_UE_S1AP_ID {
+				enbUeS1apId := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+				ieStruct.Value = int(*enbUeS1apId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *enbUeS1apId)
+			} else {
+				ieStruct.Value = "eNB-UE-S1AP-ID (not decoded)"
+				ieStruct.RawValue = fmt.Sprintf("present=%d", ie.value.present)
+			}
+
+		case 1: // HandoverType
+			if ie.value.present == C.HandoverRequiredIEs__value_PR_HandoverType {
+				handoverType := (*C.HandoverType_t)(unsafe.Pointer(&ie.value.choice))
+				typeValue := int(*handoverType)
+				ieStruct.Value = fmt.Sprintf("HandoverType(%s)", 
+					func() string {
+						switch typeValue {
+						case 0: return "intralte"
+						case 1: return "ltetoutran"
+						case 2: return "ltetogeran"
+						case 3: return "utrantolte"
+						case 4: return "gerantolte"
+						case 5: return "eps_to_5gs"
+						case 6: return "fivegs_to_eps"
+						default: return fmt.Sprintf("unknown(%d)", typeValue)
+						}
+					}())
+				ieStruct.RawValue = fmt.Sprintf("%d", typeValue)
+			} else {
+				ieStruct.Value = "HandoverType (not decoded)"
+				ieStruct.RawValue = fmt.Sprintf("present=%d", ie.value.present)
+			}
+
+		case 2: // Cause
+			if ie.value.present == C.HandoverRequiredIEs__value_PR_Cause {
+				cause := (*C.Cause_t)(unsafe.Pointer(&ie.value.choice))
+				causePresent := int(cause.present)
+				
+				var causeName string
+				switch causePresent {
+				case 1: // radioNetwork
+					causeName = "radioNetwork"
+				case 2: // transport  
+					causeName = "transport"
+				case 3: // nas
+					causeName = "nas"
+				case 4: // protocol
+					causeName = "protocol"  
+				case 5: // misc
+					causeName = "misc"
+				default:
+					causeName = fmt.Sprintf("unknown(%d)", causePresent)
+				}
+				
+				ieStruct.Value = fmt.Sprintf("Cause(%s)", causeName)
+				ieStruct.RawValue = fmt.Sprintf("Handover cause: %s (present: %d)", causeName, causePresent)
+			} else {
+				ieStruct.Value = "Cause (not decoded)"
+				ieStruct.RawValue = fmt.Sprintf("present=%d", ie.value.present)
+			}
+
+		case 4: // TargetID
+			if ie.value.present == C.HandoverRequiredIEs__value_PR_TargetID {
+				targetId := (*C.TargetID_t)(unsafe.Pointer(&ie.value.choice))
+				targetPresent := int(targetId.present)
+				
+				var targetType string
+				switch targetPresent {
+				case 1: // targeteNB
+					targetType = "targeteNB"
+				case 2: // targetRNC-ID
+					targetType = "targetRNC-ID"
+				case 3: // cGI
+					targetType = "cGI"
+				default:
+					targetType = fmt.Sprintf("unknown(%d)", targetPresent)
+				}
+				
+				ieStruct.Value = fmt.Sprintf("TargetID(%s)", targetType)
+				ieStruct.RawValue = fmt.Sprintf("Target: %s (present: %d)", targetType, targetPresent)
+			} else {
+				ieStruct.Value = "TargetID (not decoded)"
+				ieStruct.RawValue = fmt.Sprintf("present=%d", ie.value.present)
+			}
+
+		case 79: // Direct-Forwarding-Path-Availability
+			if ie.value.present == C.HandoverRequiredIEs__value_PR_Direct_Forwarding_Path_Availability {
+				ieStruct.Value = "Direct-Forwarding-Path-Availability"
+				ieStruct.RawValue = "Direct forwarding path availability"
+			} else {
+				ieStruct.Value = "Direct-Forwarding-Path-Availability (not decoded)"
+				ieStruct.RawValue = fmt.Sprintf("present=%d", ie.value.present)
+			}
+
+		case 104: // Source-ToTarget-TransparentContainer
+			if ie.value.present == C.HandoverRequiredIEs__value_PR_Source_ToTarget_TransparentContainer {
+				transparentContainer := (*C.Source_ToTarget_TransparentContainer_t)(unsafe.Pointer(&ie.value.choice))
+				containerBytes := C.GoBytes(unsafe.Pointer(transparentContainer.buf), C.int(transparentContainer.size))
+				containerHex := fmt.Sprintf("%x", containerBytes)
+				
+				ieStruct.Value = fmt.Sprintf("Source-ToTarget-TransparentContainer: %s", containerHex)
+				ieStruct.RawValue = containerHex
+			} else {
+				ieStruct.Value = "Source-ToTarget-TransparentContainer (not decoded)"
+				ieStruct.RawValue = fmt.Sprintf("present=%d", ie.value.present)
+			}
+
+		default:
+			ieStruct.Value = fmt.Sprintf("Unsupported IE (present: %d)", ie.value.present)
+			ieStruct.RawValue = fmt.Sprintf("id=%d present=%d", ie.id, ie.value.present)
+		}
+
+		result = append(result, ieStruct)
+	}
+
+	log.Printf("DEBUG: HandoverRequired extraction completed with %d IEs", len(result))
+	return result
+}
+
+// extractHandoverRequestIEs extracts IEs from HandoverRequest
+func extractHandoverRequestIEs(packet unsafe.Pointer) []*InformationElement {
+	var result []*InformationElement
+
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.InitiatingMessage_t)(unsafe.Pointer(&pdu.choice))
+	val := (*C.HandoverRequest_t)(unsafe.Pointer(&msg.value.choice))
+
+	log.Printf("DEBUG: HandoverRequest extracting IEs, protocolIEs.list.count: %d", val.protocolIEs.list.count)
+
+	var ies []*C.HandoverRequestIEs_t
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
+	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+	slice.Len = int(val.protocolIEs.list.count)
+	slice.Cap = int(val.protocolIEs.list.count)
+
+	for i, ie := range ies {
+		ieStruct := &InformationElement{
+			ID:          int(ie.id),
+			Name:        GetIEName(int(ie.id)),
+			Criticality: getCriticalityString(int(ie.criticality)),
+		}
+
+		log.Printf("DEBUG: HandoverRequest IE[%d] - ID: %d, Name: %s, Present: %d", i, ie.id, ieStruct.Name, ie.value.present)
+
+		switch ie.id {
+		case 0: // MME-UE-S1AP-ID
+			if ie.value.present == C.HandoverRequestIEs__value_PR_MME_UE_S1AP_ID {
+				mmeUeS1apId := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+				ieStruct.Value = int(*mmeUeS1apId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *mmeUeS1apId)
+			}
+
+		case 1: // HandoverType
+			if ie.value.present == C.HandoverRequestIEs__value_PR_HandoverType {
+				handoverType := (*C.HandoverType_t)(unsafe.Pointer(&ie.value.choice))
+				typeValue := int(*handoverType)
+				ieStruct.Value = fmt.Sprintf("HandoverType(%s)", 
+					func() string {
+						switch typeValue {
+						case 0: return "intralte"
+						case 1: return "ltetoutran"
+						case 2: return "ltetogeran"
+						case 3: return "utrantolte"
+						case 4: return "gerantolte"
+						case 5: return "eps_to_5gs"
+						case 6: return "fivegs_to_eps"
+						default: return fmt.Sprintf("unknown(%d)", typeValue)
+						}
+					}())
+				ieStruct.RawValue = fmt.Sprintf("%d", typeValue)
+			}
+
+		case 2: // Cause
+			if ie.value.present == C.HandoverRequestIEs__value_PR_Cause {
+				ieStruct.Value = "Cause"
+				ieStruct.RawValue = "Handover cause information"
+			}
+
+		case 66: // UEAggregateMaximumBitrate
+			if ie.value.present == C.HandoverRequestIEs__value_PR_UEAggregateMaximumBitrate {
+				ieStruct.Value = "UEAggregateMaximumBitrate"
+				ieStruct.RawValue = "UE aggregate maximum bitrate"
+			}
+
+		case 104: // Source-ToTarget-TransparentContainer
+			if ie.value.present == C.HandoverRequestIEs__value_PR_Source_ToTarget_TransparentContainer {
+				transparentContainer := (*C.Source_ToTarget_TransparentContainer_t)(unsafe.Pointer(&ie.value.choice))
+				containerBytes := C.GoBytes(unsafe.Pointer(transparentContainer.buf), C.int(transparentContainer.size))
+				containerHex := fmt.Sprintf("%x", containerBytes)
+				
+				ieStruct.Value = fmt.Sprintf("Source-ToTarget-TransparentContainer: %s", containerHex)
+				ieStruct.RawValue = containerHex
+			}
+
+		default:
+			ieStruct.Value = fmt.Sprintf("Unsupported IE (present: %d)", ie.value.present)
+			ieStruct.RawValue = fmt.Sprintf("id=%d present=%d", ie.id, ie.value.present)
+		}
+
+		result = append(result, ieStruct)
+	}
+
+	log.Printf("DEBUG: HandoverRequest extraction completed with %d IEs", len(result))
+	return result
+}
+
+// extractHandoverCommandIEs extracts IEs from HandoverCommand
+func extractHandoverCommandIEs(packet unsafe.Pointer) []*InformationElement {
+	var result []*InformationElement
+
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.SuccessfulOutcome_t)(unsafe.Pointer(&pdu.choice))
+	val := (*C.HandoverCommand_t)(unsafe.Pointer(&msg.value.choice))
+
+	log.Printf("DEBUG: HandoverCommand extracting IEs, protocolIEs.list.count: %d", val.protocolIEs.list.count)
+
+	var ies []*C.HandoverCommandIEs_t
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
+	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+	slice.Len = int(val.protocolIEs.list.count)
+	slice.Cap = int(val.protocolIEs.list.count)
+
+	for i, ie := range ies {
+		ieStruct := &InformationElement{
+			ID:          int(ie.id),
+			Name:        GetIEName(int(ie.id)),
+			Criticality: getCriticalityString(int(ie.criticality)),
+		}
+
+		log.Printf("DEBUG: HandoverCommand IE[%d] - ID: %d, Name: %s, Present: %d", i, ie.id, ieStruct.Name, ie.value.present)
+
+		switch ie.id {
+		case 0: // MME-UE-S1AP-ID
+			if ie.value.present == C.HandoverCommandIEs__value_PR_MME_UE_S1AP_ID {
+				mmeUeS1apId := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+				ieStruct.Value = int(*mmeUeS1apId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *mmeUeS1apId)
+			}
+
+		case 8: // eNB-UE-S1AP-ID
+			if ie.value.present == C.HandoverCommandIEs__value_PR_ENB_UE_S1AP_ID {
+				enbUeS1apId := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+				ieStruct.Value = int(*enbUeS1apId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *enbUeS1apId)
+			}
+
+		case 1: // HandoverType
+			if ie.value.present == C.HandoverCommandIEs__value_PR_HandoverType {
+				handoverType := (*C.HandoverType_t)(unsafe.Pointer(&ie.value.choice))
+				typeValue := int(*handoverType)
+				ieStruct.Value = fmt.Sprintf("HandoverType(%s)", 
+					func() string {
+						switch typeValue {
+						case 0: return "intralte"
+						case 1: return "ltetoutran"
+						case 2: return "ltetogeran"
+						case 3: return "utrantolte"
+						case 4: return "gerantolte"
+						case 5: return "eps_to_5gs"
+						case 6: return "fivegs_to_eps"
+						default: return fmt.Sprintf("unknown(%d)", typeValue)
+						}
+					}())
+				ieStruct.RawValue = fmt.Sprintf("%d", typeValue)
+			}
+
+		case 123: // Target-ToSource-TransparentContainer
+			if ie.value.present == C.HandoverCommandIEs__value_PR_Target_ToSource_TransparentContainer {
+				transparentContainer := (*C.Target_ToSource_TransparentContainer_t)(unsafe.Pointer(&ie.value.choice))
+				containerBytes := C.GoBytes(unsafe.Pointer(transparentContainer.buf), C.int(transparentContainer.size))
+				containerHex := fmt.Sprintf("%x", containerBytes)
+				
+				ieStruct.Value = fmt.Sprintf("Target-ToSource-TransparentContainer: %s", containerHex)
+				ieStruct.RawValue = containerHex
+			}
+
+		default:
+			ieStruct.Value = fmt.Sprintf("HandoverCommand IE (id: %d)", ie.id)
+			ieStruct.RawValue = fmt.Sprintf("id=%d", ie.id)
+		}
+
+		result = append(result, ieStruct)
+	}
+
+	log.Printf("DEBUG: HandoverCommand extraction completed with %d IEs", len(result))
+	return result
+}
+
+// extractHandoverNotifyIEs extracts IEs from HandoverNotify
+func extractHandoverNotifyIEs(packet unsafe.Pointer) []*InformationElement {
+	return extractGenericIEs(packet, HANDOVER_NOTIFY) // Basic implementation
+}
+
+// extractHandoverCancelIEs extracts IEs from HandoverCancel  
+func extractHandoverCancelIEs(packet unsafe.Pointer) []*InformationElement {
+	return extractGenericIEs(packet, HANDOVER_CANCEL) // Basic implementation
+}
+
+// extractHandoverSuccessIEs extracts IEs from HandoverSuccess
+func extractHandoverSuccessIEs(packet unsafe.Pointer) []*InformationElement {
+	return extractGenericIEs(packet, HANDOVER_SUCCESS) // Basic implementation
+}
+
+// extractHandoverCancelAcknowledgeIEs extracts IEs from HandoverCancelAcknowledge
+func extractHandoverCancelAcknowledgeIEs(packet unsafe.Pointer) []*InformationElement {
+	return extractGenericIEs(packet, HANDOVER_CANCEL_ACKNOWLEDGE) // Basic implementation
+}
+
+// extractHandoverPreparationFailureIEs extracts IEs from HandoverPreparationFailure
+func extractHandoverPreparationFailureIEs(packet unsafe.Pointer) []*InformationElement {
+	var result []*InformationElement
+
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.UnsuccessfulOutcome_t)(unsafe.Pointer(&pdu.choice))
+	val := (*C.HandoverPreparationFailure_t)(unsafe.Pointer(&msg.value.choice))
+
+	log.Printf("DEBUG: HandoverPreparationFailure extracting IEs, protocolIEs.list.count: %d", val.protocolIEs.list.count)
+
+	var ies []*C.HandoverPreparationFailureIEs_t
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
+	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+	slice.Len = int(val.protocolIEs.list.count)
+	slice.Cap = int(val.protocolIEs.list.count)
+
+	for i, ie := range ies {
+		ieStruct := &InformationElement{
+			ID:          int(ie.id),
+			Name:        GetIEName(int(ie.id)),
+			Criticality: getCriticalityString(int(ie.criticality)),
+		}
+
+		log.Printf("DEBUG: HandoverPreparationFailure IE[%d] - ID: %d, Name: %s, Present: %d", i, ie.id, ieStruct.Name, ie.value.present)
+
+		switch ie.id {
+		case 0: // MME-UE-S1AP-ID
+			if ie.value.present == C.HandoverPreparationFailureIEs__value_PR_MME_UE_S1AP_ID {
+				mmeUeS1apId := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+				ieStruct.Value = int(*mmeUeS1apId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *mmeUeS1apId)
+			}
+
+		case 8: // eNB-UE-S1AP-ID
+			if ie.value.present == C.HandoverPreparationFailureIEs__value_PR_ENB_UE_S1AP_ID {
+				enbUeS1apId := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+				ieStruct.Value = int(*enbUeS1apId)
+				ieStruct.RawValue = fmt.Sprintf("%d", *enbUeS1apId)
+			}
+
+		case 2: // Cause
+			if ie.value.present == C.HandoverPreparationFailureIEs__value_PR_Cause {
+				cause := (*C.Cause_t)(unsafe.Pointer(&ie.value.choice))
+				causePresent := int(cause.present)
+				
+				var causeName string
+				var causeDetail string
+				switch causePresent {
+				case 1: // radioNetwork
+					causeName = "radioNetwork"
+					// Try to get specific radio network cause
+					radioNetworkCause := (*C.CauseRadioNetwork_t)(unsafe.Pointer(&cause.choice))
+					causeValue := int(*radioNetworkCause)
+					switch causeValue {
+					case 11: causeDetail = "unknown-targetID"
+					case 16: causeDetail = "handover-desirable-for-radio-reason"
+					case 17: causeDetail = "time-critical-handover"
+					case 18: causeDetail = "resource-optimisation-handover"
+					default: causeDetail = fmt.Sprintf("cause(%d)", causeValue)
+					}
+				case 2: // transport
+					causeName = "transport"
+					causeDetail = "transport cause"
+				case 3: // nas
+					causeName = "nas"
+					causeDetail = "nas cause"
+				case 4: // protocol
+					causeName = "protocol"
+					causeDetail = "protocol cause"
+				case 5: // misc
+					causeName = "misc"
+					causeDetail = "misc cause"
+				default:
+					causeName = fmt.Sprintf("unknown(%d)", causePresent)
+					causeDetail = fmt.Sprintf("unknown cause type %d", causePresent)
+				}
+				
+				// Show detailed cause in Value field to match Wireshark format
+				ieStruct.Value = fmt.Sprintf("%s (%s)", causeName, causeDetail)
+				ieStruct.RawValue = fmt.Sprintf("present=%d, value=%d", causePresent, int(*(*C.CauseRadioNetwork_t)(unsafe.Pointer(&cause.choice))))
+			}
+
+		case 58: // CriticalityDiagnostics
+			ieStruct.Value = "CriticalityDiagnostics"
+			ieStruct.RawValue = "Criticality diagnostics information"
+
+		default:
+			ieStruct.Value = fmt.Sprintf("HandoverPreparationFailure IE (id: %d)", ie.id)
+			ieStruct.RawValue = fmt.Sprintf("id=%d", ie.id)
+		}
+
+		result = append(result, ieStruct)
+	}
+
+	log.Printf("DEBUG: HandoverPreparationFailure extraction completed with %d IEs", len(result))
+	return result
+}
+
+// extractHandoverFailureIEs extracts IEs from HandoverFailure
+func extractHandoverFailureIEs(packet unsafe.Pointer) []*InformationElement {
+	return extractGenericIEs(packet, HANDOVER_FAILURE) // Basic implementation
 }
 
 func extractUECapabilityInfoIndicationIEs(packet unsafe.Pointer) []*InformationElement {
@@ -3073,6 +3655,227 @@ func extractERABReleaseIndicationIEs(packet unsafe.Pointer) []*InformationElemen
 	return result
 }
 
+// extractS1SetupRequestIEs extracts IEs from S1SetupRequest
+func extractS1SetupRequestIEs(packet unsafe.Pointer) []*InformationElement {
+	var result []*InformationElement
+
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.InitiatingMessage_t)(unsafe.Pointer(&pdu.choice))
+	val := (*C.S1SetupRequest_t)(unsafe.Pointer(&msg.value.choice))
+
+	log.Printf("DEBUG: S1SetupRequest extracting IEs, protocolIEs.list.count: %d", val.protocolIEs.list.count)
+
+	var ies []*C.S1SetupRequestIEs_t
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
+	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+	slice.Len = int(val.protocolIEs.list.count)
+	slice.Cap = int(val.protocolIEs.list.count)
+
+	for i, ie := range ies {
+		ieStruct := &InformationElement{
+			ID:          int(ie.id),
+			Name:        GetIEName(int(ie.id)),
+			Criticality: getCriticalityString(int(ie.criticality)),
+		}
+
+		log.Printf("DEBUG: S1SetupRequest IE[%d] - ID: %d, Name: %s, Present: %d", i, ie.id, ieStruct.Name, ie.value.present)
+
+		switch ie.id {
+		case 59: // Global-ENB-ID
+			if ie.value.present == C.S1SetupRequestIEs__value_PR_Global_ENB_ID {
+				ieStruct.Value = "Global-ENB-ID"
+				ieStruct.RawValue = "eNB global identifier"
+			}
+
+		case 60: // ENBname
+			if ie.value.present == C.S1SetupRequestIEs__value_PR_ENBname {
+				enbName := (*C.ENBname_t)(unsafe.Pointer(&ie.value.choice))
+				nameLen := int(enbName.size)
+				if nameLen > 0 && nameLen <= 150 {
+					nameBytes := C.GoBytes(unsafe.Pointer(enbName.buf), C.int(nameLen))
+					ieStruct.Value = string(nameBytes)
+					ieStruct.RawValue = string(nameBytes)
+				} else {
+					ieStruct.Value = fmt.Sprintf("ENBname(%d bytes)", nameLen)
+					ieStruct.RawValue = fmt.Sprintf("%d bytes", nameLen)
+				}
+			}
+
+		case 64: // SupportedTAs
+			if ie.value.present == C.S1SetupRequestIEs__value_PR_SupportedTAs {
+				ieStruct.Value = "SupportedTAs"
+				ieStruct.RawValue = "List of supported tracking areas"
+			}
+
+		case 137: // PagingDRX
+			if ie.value.present == C.S1SetupRequestIEs__value_PR_PagingDRX {
+				pagingDRX := (*C.PagingDRX_t)(unsafe.Pointer(&ie.value.choice))
+				drxValue := int(*pagingDRX)
+				ieStruct.Value = fmt.Sprintf("PagingDRX(%s)", 
+					func() string {
+						switch drxValue {
+						case 0: return "v32"
+						case 1: return "v64"  
+						case 2: return "v128"
+						case 3: return "v256"
+						default: return fmt.Sprintf("unknown(%d)", drxValue)
+						}
+					}())
+				ieStruct.RawValue = fmt.Sprintf("%d", drxValue)
+			}
+
+		default:
+			ieStruct.Value = fmt.Sprintf("Unsupported IE (present: %d)", ie.value.present)
+			ieStruct.RawValue = fmt.Sprintf("id=%d present=%d", ie.id, ie.value.present)
+		}
+
+		result = append(result, ieStruct)
+	}
+
+	log.Printf("DEBUG: S1SetupRequest extraction completed with %d IEs", len(result))
+	return result
+}
+
+// extractS1SetupResponseIEs extracts IEs from S1SetupResponse
+func extractS1SetupResponseIEs(packet unsafe.Pointer) []*InformationElement {
+	var result []*InformationElement
+
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.SuccessfulOutcome_t)(unsafe.Pointer(&pdu.choice))
+	val := (*C.S1SetupResponse_t)(unsafe.Pointer(&msg.value.choice))
+
+	log.Printf("DEBUG: S1SetupResponse extracting IEs, protocolIEs.list.count: %d", val.protocolIEs.list.count)
+
+	var ies []*C.S1SetupResponseIEs_t
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
+	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+	slice.Len = int(val.protocolIEs.list.count)
+	slice.Cap = int(val.protocolIEs.list.count)
+
+	for i, ie := range ies {
+		ieStruct := &InformationElement{
+			ID:          int(ie.id),
+			Name:        GetIEName(int(ie.id)),
+			Criticality: getCriticalityString(int(ie.criticality)),
+		}
+
+		log.Printf("DEBUG: S1SetupResponse IE[%d] - ID: %d, Name: %s, Present: %d", i, ie.id, ieStruct.Name, ie.value.present)
+
+		switch ie.id {
+		case 61: // MMEname
+			if ie.value.present == C.S1SetupResponseIEs__value_PR_MMEname {
+				mmeName := (*C.MMEname_t)(unsafe.Pointer(&ie.value.choice))
+				nameLen := int(mmeName.size)
+				if nameLen > 0 && nameLen <= 150 {
+					nameBytes := C.GoBytes(unsafe.Pointer(mmeName.buf), C.int(nameLen))
+					ieStruct.Value = string(nameBytes)
+					ieStruct.RawValue = string(nameBytes)
+				} else {
+					ieStruct.Value = fmt.Sprintf("MMEname(%d bytes)", nameLen)
+					ieStruct.RawValue = fmt.Sprintf("%d bytes", nameLen)
+				}
+			}
+
+		case 105: // ServedGUMMEIs
+			if ie.value.present == C.S1SetupResponseIEs__value_PR_ServedGUMMEIs {
+				ieStruct.Value = "ServedGUMMEIs"
+				ieStruct.RawValue = "List of served GUMMEIs"
+			}
+
+		case 87: // RelativeMMECapacity
+			if ie.value.present == C.S1SetupResponseIEs__value_PR_RelativeMMECapacity {
+				capacity := (*C.RelativeMMECapacity_t)(unsafe.Pointer(&ie.value.choice))
+				ieStruct.Value = int(*capacity)
+				ieStruct.RawValue = fmt.Sprintf("%d", *capacity)
+			}
+
+		case 159: // CriticalityDiagnostics
+			if ie.value.present == C.S1SetupResponseIEs__value_PR_CriticalityDiagnostics {
+				ieStruct.Value = "CriticalityDiagnostics"
+				ieStruct.RawValue = "Criticality diagnostics information"
+			}
+
+		default:
+			ieStruct.Value = fmt.Sprintf("Unsupported IE (present: %d)", ie.value.present)
+			ieStruct.RawValue = fmt.Sprintf("id=%d present=%d", ie.id, ie.value.present)
+		}
+
+		result = append(result, ieStruct)
+	}
+
+	log.Printf("DEBUG: S1SetupResponse extraction completed with %d IEs", len(result))
+	return result
+}
+
+// extractS1SetupFailureIEs extracts IEs from S1SetupFailure
+func extractS1SetupFailureIEs(packet unsafe.Pointer) []*InformationElement {
+	var result []*InformationElement
+
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.UnsuccessfulOutcome_t)(unsafe.Pointer(&pdu.choice))
+	val := (*C.S1SetupFailure_t)(unsafe.Pointer(&msg.value.choice))
+
+	log.Printf("DEBUG: S1SetupFailure extracting IEs, protocolIEs.list.count: %d", val.protocolIEs.list.count)
+
+	var ies []*C.S1SetupFailureIEs_t
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
+	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+	slice.Len = int(val.protocolIEs.list.count)
+	slice.Cap = int(val.protocolIEs.list.count)
+
+	for i, ie := range ies {
+		ieStruct := &InformationElement{
+			ID:          int(ie.id),
+			Name:        GetIEName(int(ie.id)),
+			Criticality: getCriticalityString(int(ie.criticality)),
+		}
+
+		log.Printf("DEBUG: S1SetupFailure IE[%d] - ID: %d, Name: %s, Present: %d", i, ie.id, ieStruct.Name, ie.value.present)
+
+		switch ie.id {
+		case 2: // Cause
+			if ie.value.present == C.S1SetupFailureIEs__value_PR_Cause {
+				ieStruct.Value = "Cause"
+				ieStruct.RawValue = "Failure cause information"
+			}
+
+		case 31: // TimeToWait
+			if ie.value.present == C.S1SetupFailureIEs__value_PR_TimeToWait {
+				timeToWait := (*C.TimeToWait_t)(unsafe.Pointer(&ie.value.choice))
+				waitValue := int(*timeToWait)
+				ieStruct.Value = fmt.Sprintf("TimeToWait(%s)",
+					func() string {
+						switch waitValue {
+						case 0: return "v1s"
+						case 1: return "v2s"
+						case 2: return "v5s"
+						case 3: return "v10s"
+						case 4: return "v20s"
+						case 5: return "v60s"
+						default: return fmt.Sprintf("unknown(%d)", waitValue)
+						}
+					}())
+				ieStruct.RawValue = fmt.Sprintf("%d", waitValue)
+			}
+
+		case 159: // CriticalityDiagnostics
+			if ie.value.present == C.S1SetupFailureIEs__value_PR_CriticalityDiagnostics {
+				ieStruct.Value = "CriticalityDiagnostics"
+				ieStruct.RawValue = "Criticality diagnostics information"
+			}
+
+		default:
+			ieStruct.Value = fmt.Sprintf("Unsupported IE (present: %d)", ie.value.present)
+			ieStruct.RawValue = fmt.Sprintf("id=%d present=%d", ie.id, ie.value.present)
+		}
+
+		result = append(result, ieStruct)
+	}
+
+	log.Printf("DEBUG: S1SetupFailure extraction completed with %d IEs", len(result))
+	return result
+}
+
 func extractUEContextModificationResponseIEs(packet unsafe.Pointer) []*InformationElement {
 	var result []*InformationElement
 
@@ -3158,16 +3961,11 @@ func extractUEContextModificationResponseIEs(packet unsafe.Pointer) []*Informati
 	return result
 }
 
-func extractS1SetupResponseIEs(packet unsafe.Pointer) []*InformationElement {
-	return extractGenericIEs(packet, 1) // S1SetupResponse
-}
+// These stubs were replaced by comprehensive implementations above
 
+// extractInitialContextSetupResponseIEs extracts IEs from InitialContextSetupResponse
 func extractInitialContextSetupResponseIEs(packet unsafe.Pointer) []*InformationElement {
 	return extractGenericIEs(packet, 9) // InitialContextSetupResponse
-}
-
-func extractHandoverCommandIEs(packet unsafe.Pointer) []*InformationElement {
-	return extractGenericIEs(packet, 12) // HandoverCommand
 }
 
 func extractUEContextReleaseCompleteIEs(packet unsafe.Pointer) []*InformationElement {
@@ -3378,9 +4176,7 @@ func extractUEContextModificationFailureIEs(packet unsafe.Pointer) []*Informatio
 	return result
 }
 
-func extractS1SetupFailureIEs(packet unsafe.Pointer) []*InformationElement {
-	return extractGenericIEs(packet, 2) // S1SetupFailure
-}
+// Stub replaced by comprehensive implementation above
 
 func extractInitialContextSetupFailureIEs(packet unsafe.Pointer) []*InformationElement {
 	return extractGenericIEs(packet, 10) // InitialContextSetupFailure
