@@ -30,6 +30,9 @@ package s1ap
 // #include "UERadioCapability.h" 
 // #include "TransportLayerAddress.h"
 // #include "PrivacyIndicator.h"
+// #include "E-RABSetupResponse.h"
+// #include "E-RABSetupListBearerSURes.h"
+// #include "E-RABSetupItemBearerSURes.h"
 // #include "E-RABReleaseResponse.h"
 // #include "E-RABReleaseCommand.h"
 // #include "E-RABReleaseIndication.h"
@@ -1056,6 +1059,7 @@ func extractSuccessfulOutcomeIEs(packet unsafe.Pointer, messageType int) []*Info
 		log.Printf("DEBUG: Calling extractERABReleaseResponseIEs for procedure code 7")
 		ies = extractERABReleaseResponseIEs(packet)
 	case 5: // E-RABSetup
+		log.Printf("DEBUG: Calling extractERABSetupResponseIEs for procedure code 5")
 		ies = extractERABSetupResponseIEs(packet)
 	case 17: // S1Setup
 		ies = extractS1SetupResponseIEs(packet)
@@ -2788,7 +2792,158 @@ func extractLocationReportIEs(packet unsafe.Pointer) []*InformationElement {
 // ===== FONCTIONS D'EXTRACTION SIMPLIFIÉES =====
 
 func extractERABSetupResponseIEs(packet unsafe.Pointer) []*InformationElement {
-	return extractGenericIEs(packet, 5) // E-RABSetupResponse
+	log.Printf("DEBUG: === Extracting E-RABSetupResponse IEs ===")
+	
+	// Cast to S1AP_PDU_t first
+	pdu := (*C.S1AP_PDU_t)(packet)
+	if pdu == nil {
+		log.Printf("DEBUG: PDU pointer is null")
+		return []*InformationElement{}
+	}
+
+	// Check PDU type
+	if pdu.present != C.S1AP_PDU_PR_successfulOutcome {
+		log.Printf("DEBUG: PDU is not a SuccessfulOutcome")
+		return []*InformationElement{}
+	}
+
+	// Get the SuccessfulOutcome message
+	msg := *(**C.SuccessfulOutcome_t)(unsafe.Pointer(&pdu.choice))
+	if msg == nil {
+		log.Printf("DEBUG: SuccessfulOutcome pointer is null")
+		return []*InformationElement{}
+	}
+
+	// Check if it's an E-RABSetupResponse
+	if msg.value.present != C.SuccessfulOutcome__value_PR_E_RABSetupResponse {
+		log.Printf("DEBUG: SuccessfulOutcome is not E-RABSetupResponse, present=%d", msg.value.present)
+		return []*InformationElement{}
+	}
+
+	// Cast to E_RABSetupResponse_t 
+	response := (*C.E_RABSetupResponse_t)(unsafe.Pointer(&msg.value.choice))
+	if response == nil {
+		log.Printf("DEBUG: E-RABSetupResponse pointer is null")
+		return []*InformationElement{}
+	}
+
+	// Get the protocol IEs list
+	ies := response.protocolIEs
+	log.Printf("DEBUG: Number of IEs in E-RABSetupResponse: %d", int(ies.list.count))
+	
+	var informationElements []*InformationElement
+
+	// Iterate through each IE
+	for i := 0; i < int(ies.list.count); i++ {
+		iePtr := (**C.E_RABSetupResponseIEs_t)(unsafe.Pointer(uintptr(unsafe.Pointer(ies.list.array)) + uintptr(i)*unsafe.Sizeof(uintptr(0))))
+		if iePtr == nil || *iePtr == nil {
+			log.Printf("DEBUG: IE %d is null", i)
+			continue
+		}
+
+		ie := *iePtr
+		log.Printf("DEBUG: IE %d: id=%d, criticality=%d, present=%d", i, int(ie.id), int(ie.criticality), int(ie.value.present))
+
+		switch ie.value.present {
+		case C.E_RABSetupResponseIEs__value_PR_MME_UE_S1AP_ID:
+			mmeUEID := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice[0]))
+			value := uint32(*mmeUEID)
+			log.Printf("DEBUG: Found MME-UE-S1AP-ID: %d", value)
+			informationElements = append(informationElements, &InformationElement{
+				ID:          int(ie.id),
+				Name:        GetIEName(int(ie.id)),
+				Criticality: getCriticalityString(int(ie.criticality)),
+				Value:       fmt.Sprintf("%d", value),
+				RawValue:    fmt.Sprintf("0x%08x", value),
+			})
+
+		case C.E_RABSetupResponseIEs__value_PR_ENB_UE_S1AP_ID:
+			enbUEID := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice[0]))
+			value := uint32(*enbUEID)
+			log.Printf("DEBUG: Found eNB-UE-S1AP-ID: %d", value)
+			informationElements = append(informationElements, &InformationElement{
+				ID:          int(ie.id),
+				Name:        GetIEName(int(ie.id)),
+				Criticality: getCriticalityString(int(ie.criticality)),
+				Value:       fmt.Sprintf("%d", value),
+				RawValue:    fmt.Sprintf("0x%08x", value),
+			})
+
+		case C.E_RABSetupResponseIEs__value_PR_E_RABSetupListBearerSURes:
+			setupList := (*C.E_RABSetupListBearerSURes_t)(unsafe.Pointer(&ie.value.choice[0]))
+			log.Printf("DEBUG: Found E-RABSetupListBearerSURes with %d items", int(setupList.list.count))
+			
+			var bearerItems []string
+			for j := 0; j < int(setupList.list.count); j++ {
+				itemPtr := (**C.E_RABSetupItemBearerSUResIEs_t)(unsafe.Pointer(uintptr(unsafe.Pointer(setupList.list.array)) + uintptr(j)*unsafe.Sizeof(uintptr(0))))
+				if itemPtr == nil || *itemPtr == nil {
+					log.Printf("DEBUG: E-RAB item %d is null", j)
+					continue
+				}
+
+				containerIE := (*C.E_RABSetupItemBearerSUResIEs_t)(*itemPtr)
+				if containerIE.value.present == C.E_RABSetupItemBearerSUResIEs__value_PR_E_RABSetupItemBearerSURes {
+					bearerItem := (*C.E_RABSetupItemBearerSURes_t)(unsafe.Pointer(&containerIE.value.choice[0]))
+					
+					// Extract E-RAB-ID
+					erabID := uint8(bearerItem.e_RAB_ID)
+					log.Printf("DEBUG: E-RAB-ID: %d", erabID)
+					
+					// Extract Transport Layer Address (IP address)
+					transportAddr := &bearerItem.transportLayerAddress
+					transportAddrBytes := C.GoBytes(unsafe.Pointer(transportAddr.buf), C.int(transportAddr.size))
+					var ipAddr net.IP
+					if len(transportAddrBytes) >= 4 {
+						// Convert bit string to IP address (assuming IPv4, 32 bits)
+						ipBytes := make([]byte, 4)
+						for k := 0; k < 4 && k < len(transportAddrBytes); k++ {
+							ipBytes[k] = transportAddrBytes[k]
+						}
+						ipAddr = net.IPv4(ipBytes[0], ipBytes[1], ipBytes[2], ipBytes[3])
+					}
+					log.Printf("DEBUG: Transport Layer Address: %s", ipAddr.String())
+					
+					// Extract GTP-TEID
+					gtpTEID := (*C.GTP_TEID_t)(unsafe.Pointer(&bearerItem.gTP_TEID))
+					teidBytes := C.GoBytes(unsafe.Pointer(gtpTEID.buf), C.int(gtpTEID.size))
+					var teidValue uint32
+					if len(teidBytes) >= 4 {
+						teidValue = binary.BigEndian.Uint32(teidBytes[:4])
+					}
+					log.Printf("DEBUG: GTP-TEID: %08x", teidValue)
+					
+					bearerInfo := fmt.Sprintf("E-RAB-ID: %d, Transport Address: %s, GTP-TEID: %08x", 
+						erabID, ipAddr.String(), teidValue)
+					bearerItems = append(bearerItems, bearerInfo)
+				}
+			}
+			
+			value := fmt.Sprintf("E-RABSetupListBearerSURes (%d items):\n%s", 
+				len(bearerItems), strings.Join(bearerItems, "\n"))
+			log.Printf("DEBUG: E-RABSetupListBearerSURes value: %s", value)
+			
+			informationElements = append(informationElements, &InformationElement{
+				ID:          int(ie.id),
+				Name:        GetIEName(int(ie.id)),
+				Criticality: getCriticalityString(int(ie.criticality)),
+				Value:       value,
+				RawValue:    fmt.Sprintf("count=%d", len(bearerItems)),
+			})
+
+		default:
+			log.Printf("DEBUG: Unhandled IE type in E-RABSetupResponse: %d", int(ie.value.present))
+			informationElements = append(informationElements, &InformationElement{
+				ID:          int(ie.id),
+				Name:        GetIEName(int(ie.id)),
+				Criticality: getCriticalityString(int(ie.criticality)),
+				Value:       "Not decoded",
+				RawValue:    fmt.Sprintf("present=%d", int(ie.value.present)),
+			})
+		}
+	}
+
+	log.Printf("DEBUG: Extracted %d IEs from E-RABSetupResponse", len(informationElements))
+	return informationElements
 }
 
 // extractHandoverRequestAcknowledgeIEs extracts IEs from HandoverRequestAcknowledge
