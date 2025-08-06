@@ -37,8 +37,6 @@ import (
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
-	"github.com/xitongsys/parquet-go-source/local"
-	"github.com/xitongsys/parquet-go/writer"
 
 	"github.com/coreswitch/coreswitch/pkg/s1ap"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -69,11 +67,15 @@ type Config struct {
 	MongoDB         string 
 	MongoCollection string 
 	SessionsFile    string // Path to store completed sessions JSON file
-	ParquetOutput   string // Path to store completed sessions Parquet file
 	JSONOutput      string // Path to store decoded packets JSON file
 
 	Interface       string        // Interface réseau pour capture en direct
     Duration        time.Duration // Durée de capture
+    
+    // Coverage analysis options
+    CoverageAnalysis bool   // Enable coverage analysis
+    CoverageOutput   string // Output path for coverage reports
+    SimulationOnly   bool   // Use only simulation data
 }
 
 // S1APMessage represents a parsed S1AP message
@@ -127,28 +129,6 @@ type UeSessionDocument struct {
 	STMSI             *STMSIInfo      `bson:"s_tmsi,omitempty"` // S-TMSI extrait des messages InitialUE
 }
 
-// SessionDocumentParquet représente une session UE pour le format Parquet
-type SessionDocumentParquet struct {
-	SessionID         string  `parquet:"name=session_id, type=BYTE_ARRAY, convertedtype=UTF8"`
-	MmeUeS1apID       int64   `parquet:"name=mme_ue_s1ap_id, type=INT64"`
-	EnbUeS1apID       int64   `parquet:"name=enb_ue_s1ap_id, type=INT64"`
-	SrcIP             string  `parquet:"name=src_ip, type=BYTE_ARRAY, convertedtype=UTF8"`
-	DstIP             string  `parquet:"name=dst_ip, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Status            string  `parquet:"name=status, type=BYTE_ARRAY, convertedtype=UTF8"`
-	CreationTimestamp int64   `parquet:"name=creation_timestamp, type=INT64, convertedtype=TIMESTAMP_MILLIS"`
-	LastUpdate        int64   `parquet:"name=last_update, type=INT64, convertedtype=TIMESTAMP_MILLIS"`
-	MessageCount      int32   `parquet:"name=message_count, type=INT32"`
-	FirstProcedure    string  `parquet:"name=first_procedure, type=BYTE_ARRAY, convertedtype=UTF8"`
-	LastProcedure     string  `parquet:"name=last_procedure, type=BYTE_ARRAY, convertedtype=UTF8"`
-	DurationMs        int64   `parquet:"name=duration_ms, type=INT64"`
-	AttachCount       int32   `parquet:"name=attach_count, type=INT32"`
-	DetachCount       int32   `parquet:"name=detach_count, type=INT32"`
-	HandoverCount     int32   `parquet:"name=handover_count, type=INT32"`
-	ServiceCount      int32   `parquet:"name=service_count, type=INT32"`
-	MessagesJSON      string  `parquet:"name=messages_json, type=BYTE_ARRAY, convertedtype=UTF8"` // Messages sérialisés en JSON
-	ProcedureStatsJSON string `parquet:"name=procedure_stats_json, type=BYTE_ARRAY, convertedtype=UTF8"` // Stats sérialisées en JSON
-}
-
 // STMSIInfo représente les informations S-TMSI pour la liaison des messages Paging
 type STMSIInfo struct {
 	MMEC  string `bson:"mmec"`  // MME Code
@@ -179,8 +159,21 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Mode simulation uniquement
+	if config.SimulationOnly {
+		log.Println("INFO: Running in simulation-only mode for coverage analysis")
+		if !config.CoverageAnalysis {
+			config.CoverageAnalysis = true
+		}
+		
+		// Créer l'analyzer de coverage et traiter uniquement les données simulées
+		_ = NewCoverageAnalyzer(config.CoverageOutput)
+		log.Println("INFO: Coverage analysis completed. Report generated.")
+		return
+	}
+
 	if config.PcapFile == "" && config.Interface == "" {
-		fmt.Fprintf(os.Stderr, "Error: PCAP file or interface is required\n\n")
+		fmt.Fprintf(os.Stderr, "Error: PCAP file or interface is required (unless using -simulation-only)\n\n")
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -209,11 +202,13 @@ func parseFlags() *Config {
     flag.StringVar(&config.MongoURI, "mongo-uri", "mongodb://10.200.0.21:27017", "MongoDB connection URI")
     flag.StringVar(&config.MongoDB, "mongo-db", "s1ap_db", "MongoDB database name")
     flag.StringVar(&config.MongoCollection, "mongo-collection", "messages", "MongoDB collection name for S1AP messages")
-    
-    // Output files flags
     flag.StringVar(&config.SessionsFile, "sessions-file", "completed_sessions.json", "Path to store completed sessions JSON file")
-    flag.StringVar(&config.ParquetOutput, "parquet-output", "", "Path to store completed sessions Parquet file")
     flag.StringVar(&config.JSONOutput, "json-output", "", "Path to store decoded packets JSON file (for verification)")
+
+    // Coverage analysis flags
+    flag.BoolVar(&config.CoverageAnalysis, "coverage-analysis", false, "Enable radio coverage analysis")
+    flag.StringVar(&config.CoverageOutput, "coverage-output", "coverage_report", "Output path prefix for coverage analysis reports")
+    flag.BoolVar(&config.SimulationOnly, "simulation-only", false, "Use only simulation data (no PCAP processing)")
 
     flag.Usage = func() {
         fmt.Fprintf(os.Stderr, "S1AP Protocol Analyzer\n")
@@ -227,8 +222,7 @@ func parseFlags() *Config {
         fmt.Fprintf(os.Stderr, "  %s -format detailed -limit 1000 capture.pcap\n", os.Args[0])
         fmt.Fprintf(os.Stderr, "  %s -interface enp27s0f1 -duration 30s\n", os.Args[0])
         fmt.Fprintf(os.Stderr, "  %s -interface enp27s0f1 -mongo-store\n", os.Args[0])
-        fmt.Fprintf(os.Stderr, "  %s -mongo-store -parquet-output sessions.parquet capture.pcap\n", os.Args[0])
-        fmt.Fprintf(os.Stderr, "  %s -sessions-file sessions.json -parquet-output sessions.parquet capture.pcap\n", os.Args[0])
+        fmt.Fprintf(os.Stderr, "  %s -coverage-analysis -debug capture.pcap\n", os.Args[0])
     }
     
     flag.Parse()
@@ -252,6 +246,9 @@ type Analyzer struct {
 	// JSON output support
 	jsonMessages []*S1APMessage
 	jsonMutex    sync.Mutex
+	
+	// Coverage analysis
+	coverageAnalyzer *CoverageAnalyzer
 }
 
 // NewAnalyzer creates a new analyzer instance
@@ -263,6 +260,13 @@ func NewAnalyzer(config *Config) *Analyzer {
 			StartTime:      time.Now(),
 		},
 		jsonMessages: make([]*S1APMessage, 0),
+	}
+
+	// Initialize coverage analyzer if enabled
+	if config.CoverageAnalysis {
+		analyzer.coverageAnalyzer = NewCoverageAnalyzer(config.CoverageOutput)
+		analyzer.coverageAnalyzer.config = config
+		log.Printf("INFO: Coverage analysis enabled - Output: %s", config.CoverageOutput)
 	}
 
 	// Configuration MongoDB
@@ -591,6 +595,11 @@ func (a *Analyzer) processAndStoreMessage(msg *S1APMessage) error {
 			msg.PacketNumber, msg.ProcedureName, msg.SrcIP, msg.DstIP, len(msg.IEs))
 	}
 
+	// Coverage analysis integration
+	if a.coverageAnalyzer != nil {
+		a.coverageAnalyzer.AnalyzeMessage(msg)
+	}
+
 	// Store in JSON if output file specified
 	if a.config.JSONOutput != "" {
 		a.jsonMutex.Lock()
@@ -612,15 +621,14 @@ func (a *Analyzer) processAndStoreMessage(msg *S1APMessage) error {
 
 	// Messages qui appartiennent à une session UE spécifique (ont un eNB_UE_S1AP_ID)
 	if enbID != -1 {
-		// Pour UEContextReleaseComplete, finaliser la session existante
+		// Pour UEContextReleaseComplete, finaliser la session après l'ajout
 		if msg.ProcedureName == "UEContextReleaseComplete" {
-			// D'abord, ajouter le message à la session existante
+			// Ajouter le message à la session avant de la finaliser
 			if err := a.addMessageToSession(msg, mmeID, enbID); err != nil {
 				log.Printf("WARN: Failed to add UEContextReleaseComplete to session: %v", err)
-				// Si l'ajout échoue, peut-être que la session n'existe pas - continuer quand même
 			}
 			
-			// Maintenant finaliser la session existante
+			// Finaliser la session
 			log.Printf("INFO: UEContextReleaseComplete détecté - finalisation de la session (MME: %d, eNB: %d)", mmeID, enbID)
 			a.activeSessionHandlers.Add(1)
 			go func() {
@@ -711,28 +719,6 @@ func (a *Analyzer) addMessageToSession(msg *S1APMessage, mmeID, enbID int64) err
 		}
 	}
 
-	// Pour UEContextReleaseComplete, ne pas créer de nouvelle session si elle n'existe pas
-	if msg.ProcedureName == "UEContextReleaseComplete" {
-		// D'abord vérifier si la session existe
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		
-		var existingSession UeSessionDocument
-		err := a.mongoCollection.FindOne(ctx, filter).Decode(&existingSession)
-		if err != nil {
-			if err == mongo.ErrNoDocuments {
-				log.Printf("WARN: UEContextReleaseComplete received but no existing session found (eNB: %d, MME: %d)", enbID, mmeID)
-				// Créer quand même une session minimale pour ce message
-			} else {
-				return fmt.Errorf("failed to check existing session: %w", err)
-			}
-		} else {
-			if a.config.Debug {
-				log.Printf("DEBUG: Found existing session for UEContextReleaseComplete - SessionID: %s", existingSession.SessionID)
-			}
-		}
-	}
-
 	// Préparer les mises à jour
 	now := time.Now()
 
@@ -773,13 +759,8 @@ func (a *Analyzer) addMessageToSession(msg *S1APMessage, mmeID, enbID int64) err
 	}
 
 	if result.UpsertedID != nil {
-		if msg.ProcedureName == "UEContextReleaseComplete" {
-			log.Printf("WARN: Nouvelle session créée pour UEContextReleaseComplete - SessionID: %s (eNB: %d, MME: %d)", 
-				sessionID, enbID, mmeID)
-		} else {
-			log.Printf("INFO: Nouvelle session UE créée - SessionID: %s (eNB: %d, MME: %d, Proc: %s)", 
-				sessionID, enbID, mmeID, msg.ProcedureName)
-		}
+		log.Printf("INFO: Nouvelle session UE créée - SessionID: %s (eNB: %d, MME: %d, Proc: %s)", 
+			sessionID, enbID, mmeID, msg.ProcedureName)
 	} else if result.ModifiedCount > 0 {
 		if a.config.Debug {
 			log.Printf("DEBUG: Session UE mise à jour - SessionID: %s (Proc: %s)", sessionID, msg.ProcedureName)
@@ -1125,25 +1106,6 @@ func (a *Analyzer) extractAndStoreSTMSI(msg *S1APMessage, sessionID string) {
 
 // appendSessionToFile ajoute une session terminée au fichier JSON
 func (a *Analyzer) appendSessionToFile(session *UeSessionDocument) error {
-	// Écrire en JSON si configuré
-	if a.config.SessionsFile != "" {
-		if err := a.appendSessionToJSONFile(session); err != nil {
-			return err
-		}
-	}
-
-	// Écrire en Parquet si configuré
-	if a.config.ParquetOutput != "" {
-		if err := a.appendSessionToParquetFile(session); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// appendSessionToJSONFile ajoute une session terminée au fichier JSON
-func (a *Analyzer) appendSessionToJSONFile(session *UeSessionDocument) error {
 	a.sessionsFileMutex.Lock()
 	defer a.sessionsFileMutex.Unlock()
 
@@ -1168,118 +1130,6 @@ func (a *Analyzer) appendSessionToJSONFile(session *UeSessionDocument) error {
 
 	if err := os.WriteFile(a.config.SessionsFile, data, 0644); err != nil {
 		return fmt.Errorf("failed to write sessions file: %w", err)
-	}
-
-	return nil
-}
-
-// appendSessionToParquetFile ajoute une session terminée au fichier Parquet
-func (a *Analyzer) appendSessionToParquetFile(session *UeSessionDocument) error {
-	a.sessionsFileMutex.Lock()
-	defer a.sessionsFileMutex.Unlock()
-
-	// Convertir UeSessionDocument vers SessionDocumentParquet
-	parquetSession := a.convertToParquetSession(session)
-
-	// Utiliser un fichier JSON temporaire pour accumuler les sessions
-	tempFile := a.config.ParquetOutput + ".temp.json"
-	
-	// Lire les sessions existantes depuis le fichier temporaire
-	var existingSessions []*SessionDocumentParquet
-	if data, err := os.ReadFile(tempFile); err == nil {
-		if err := json.Unmarshal(data, &existingSessions); err != nil {
-			log.Printf("WARN: Failed to parse temp parquet sessions file, creating new one: %v", err)
-			existingSessions = []*SessionDocumentParquet{}
-		}
-	}
-
-	// Ajouter la nouvelle session
-	existingSessions = append(existingSessions, parquetSession)
-
-	// Sauvegarder dans le fichier temporaire JSON
-	if data, err := json.MarshalIndent(existingSessions, "", "  "); err == nil {
-		if err := os.WriteFile(tempFile, data, 0644); err != nil {
-			return fmt.Errorf("failed to write temp parquet sessions file: %w", err)
-		}
-	}
-
-	// Écrire le fichier Parquet complet
-	return a.writeSessionsToParquet(existingSessions)
-}
-
-// convertToParquetSession convertit une UeSessionDocument vers SessionDocumentParquet
-func (a *Analyzer) convertToParquetSession(session *UeSessionDocument) *SessionDocumentParquet {
-	parquetSession := &SessionDocumentParquet{
-		SessionID:         session.SessionID,
-		MmeUeS1apID:       session.MmeUeS1apID,
-		EnbUeS1apID:       session.EnbUeS1apID,
-		SrcIP:             session.SrcIP,
-		DstIP:             session.DstIP,
-		Status:            session.Status,
-		CreationTimestamp: session.CreationTimestamp.UnixMilli(),
-		LastUpdate:        session.LastUpdate.UnixMilli(),
-		MessageCount:      int32(session.MessageCount),
-		FirstProcedure:    session.FirstProcedure,
-		LastProcedure:     session.LastProcedure,
-		DurationMs:        session.LastUpdate.Sub(session.CreationTimestamp).Milliseconds(),
-	}
-
-	// Calculer les statistiques de procédures
-	if session.ProcedureStats != nil {
-		parquetSession.AttachCount = int32(session.ProcedureStats["InitialUEMessage"] + session.ProcedureStats["AttachRequest"])
-		parquetSession.DetachCount = int32(session.ProcedureStats["UEContextReleaseComplete"] + session.ProcedureStats["DetachRequest"])
-		parquetSession.HandoverCount = int32(session.ProcedureStats["HandoverRequired"] + session.ProcedureStats["HandoverRequest"])
-		parquetSession.ServiceCount = int32(session.ProcedureStats["ServiceRequest"] + session.ProcedureStats["InitialContextSetupRequest"])
-		
-		// Sérialiser les stats en JSON
-		if statsJSON, err := json.Marshal(session.ProcedureStats); err == nil {
-			parquetSession.ProcedureStatsJSON = string(statsJSON)
-		}
-	}
-
-	// Sérialiser les messages en JSON
-	if len(session.Messages) > 0 {
-		if messagesJSON, err := json.Marshal(session.Messages); err == nil {
-			parquetSession.MessagesJSON = string(messagesJSON)
-		}
-	}
-
-	return parquetSession
-}
-
-// readExistingParquetSessions lit les sessions existantes depuis un fichier Parquet
-func (a *Analyzer) readExistingParquetSessions() ([]*SessionDocumentParquet, error) {
-	// Pour simplifier, on va retourner une liste vide et créer un nouveau fichier
-	// Dans une implémentation complète, on utiliserait un lecteur Parquet
-	return []*SessionDocumentParquet{}, nil
-}
-
-// writeSessionsToParquet écrit les sessions au format Parquet
-func (a *Analyzer) writeSessionsToParquet(sessions []*SessionDocumentParquet) error {
-	if len(sessions) == 0 {
-		return nil
-	}
-
-	fw, err := local.NewLocalFileWriter(a.config.ParquetOutput)
-	if err != nil {
-		return fmt.Errorf("failed to create parquet file: %w", err)
-	}
-	defer fw.Close()
-
-	pw, err := writer.NewParquetWriter(fw, new(SessionDocumentParquet), 4)
-	if err != nil {
-		return fmt.Errorf("failed to create parquet writer: %w", err)
-	}
-	defer pw.WriteStop()
-
-	for _, session := range sessions {
-		if err := pw.Write(session); err != nil {
-			return fmt.Errorf("failed to write session to parquet: %w", err)
-		}
-	}
-
-	if !a.config.Debug {
-		log.Printf("Written %d sessions to Parquet file: %s", len(sessions), a.config.ParquetOutput)
 	}
 
 	return nil
@@ -1697,6 +1547,13 @@ func (a *Analyzer) outputResults(messages []*S1APMessage) error {
 		err = a.outputDetailed(messages)
 	default:
 		err = a.outputSimple(messages)
+	}
+	
+	// Generate coverage analysis report if enabled
+	if a.coverageAnalyzer != nil {
+		if coverageErr := a.coverageAnalyzer.GenerateReport(); coverageErr != nil {
+			log.Printf("ERROR: Failed to generate coverage report: %v", coverageErr)
+		}
 	}
 	
 	// Generate JSON output file if specified (after processing messages)

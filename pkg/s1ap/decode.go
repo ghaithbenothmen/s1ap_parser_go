@@ -1019,6 +1019,7 @@ func extractInitiatingMessageIEs(packet unsafe.Pointer, messageType int, procCod
 		log.Printf("DEBUG: Detected LocationReport")
 		ies = extractLocationReportIEs(packet)
 	case C.InitiatingMessage__value_PR_UEContextReleaseRequest:
+		log.Printf("DEBUG: Detected UEContextReleaseRequest - calling extractUEContextReleaseRequestIEs")
 		ies = extractUEContextReleaseRequestIEs(packet)
 	case C.InitiatingMessage__value_PR_UEContextModificationRequest:
 		log.Printf("DEBUG: Detected UEContextModificationRequest - calling extractUEContextModificationRequestIEs")
@@ -1449,37 +1450,76 @@ func extractUEContextReleaseRequestIEs(packet unsafe.Pointer) []*InformationElem
 	msg := *(**C.InitiatingMessage_t)(unsafe.Pointer(&pdu.choice))
 	val := (*C.UEContextReleaseRequest_t)(unsafe.Pointer(&msg.value.choice))
 
+	log.Printf("DEBUG: UEContextReleaseRequest extracting IEs, protocolIEs.list.count: %d", val.protocolIEs.list.count)
+
 	var ies []*C.UEContextReleaseRequest_IEs_t
 	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
 	slice.Cap = (int)(val.protocolIEs.list.count)
 	slice.Len = (int)(val.protocolIEs.list.count)
 	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
 
-	for _, ie := range ies {
+	log.Printf("DEBUG: UEContextReleaseRequest got %d IEs in slice", len(ies))
+
+	for i, ie := range ies {
+		if ie == nil {
+			log.Printf("DEBUG: UEContextReleaseRequest IE[%d] is nil, skipping", i)
+			continue
+		}
+
 		ieStruct := &InformationElement{
 			ID:          int(ie.id),
 			Name:        GetIEName(int(ie.id)),
 			Criticality: getCriticalityString(int(ie.criticality)),
 		}
 
+		log.Printf("DEBUG: UEContextReleaseRequest IE[%d] - ID: %d, Name: %s", i, ie.id, ieStruct.Name)
+
 		switch ie.id {
 		case C.ProtocolIE_ID_id_MME_UE_S1AP_ID:
 			mme_id := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
 			ieStruct.Value = int32(*mme_id)
+			ieStruct.RawValue = fmt.Sprintf("%d", int32(*mme_id))
+			log.Printf("DEBUG: UEContextReleaseRequest MME-UE-S1AP-ID: %d", int32(*mme_id))
 		case C.ProtocolIE_ID_id_eNB_UE_S1AP_ID:
 			enb_id := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
 			ieStruct.Value = int32(*enb_id)
+			ieStruct.RawValue = fmt.Sprintf("%d", int32(*enb_id))
+			log.Printf("DEBUG: UEContextReleaseRequest eNB-UE-S1AP-ID: %d", int32(*enb_id))
 		case C.ProtocolIE_ID_id_Cause:
-			ieStruct.Value = "Cause"
-			ieStruct.RawValue = "Cause structure present"
+			cause := (*C.Cause_t)(unsafe.Pointer(&ie.value.choice))
+			causeStr := ""
+			switch cause.present {
+			case C.Cause_PR_radioNetwork:
+				radioNetworkCause := (*C.CauseRadioNetwork_t)(unsafe.Pointer(&cause.choice))
+				causeStr = fmt.Sprintf("radioNetwork(%d)", int(*radioNetworkCause))
+				log.Printf("DEBUG: UEContextReleaseRequest Cause: radioNetwork(%d)", int(*radioNetworkCause))
+			case C.Cause_PR_transport:
+				transportCause := (*C.CauseTransport_t)(unsafe.Pointer(&cause.choice))
+				causeStr = fmt.Sprintf("transport(%d)", int(*transportCause))
+			case C.Cause_PR_nas:
+				nasCause := (*C.CauseNas_t)(unsafe.Pointer(&cause.choice))
+				causeStr = fmt.Sprintf("nas(%d)", int(*nasCause))
+			case C.Cause_PR_protocol:
+				protocolCause := (*C.CauseProtocol_t)(unsafe.Pointer(&cause.choice))
+				causeStr = fmt.Sprintf("protocol(%d)", int(*protocolCause))
+			case C.Cause_PR_misc:
+				miscCause := (*C.CauseMisc_t)(unsafe.Pointer(&cause.choice))
+				causeStr = fmt.Sprintf("misc(%d)", int(*miscCause))
+			default:
+				causeStr = fmt.Sprintf("unknown(%d)", cause.present)
+			}
+			ieStruct.Value = causeStr
+			ieStruct.RawValue = causeStr
 		default:
 			ieStruct.Value = "Unknown"
 			ieStruct.RawValue = fmt.Sprintf("IE_%d present", ie.id)
+			log.Printf("DEBUG: UEContextReleaseRequest Unknown IE ID: %d", ie.id)
 		}
 
 		result = append(result, ieStruct)
 	}
 
+	log.Printf("DEBUG: UEContextReleaseRequest extraction completed with %d IEs", len(result))
 	return result
 }
 
