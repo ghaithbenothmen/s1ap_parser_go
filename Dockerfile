@@ -37,7 +37,7 @@ COPY . .
     # Go back to main directory and build the application
 WORKDIR /app
 ENV CGO_ENABLED=1
-RUN go build -o s1ap-analyzer cmd/s1ap-analyzer/main.go
+RUN go build -o s1ap-analyzer ./cmd/s1ap-analyzer/
 
 # Stage 2: Runtime environment
 FROM debian:bullseye-slim
@@ -47,31 +47,25 @@ RUN apt-get update && apt-get install -y \
     libpcap0.8 \
     ca-certificates \
     tzdata \
+    procps \
+    net-tools \
     && rm -rf /var/lib/apt/lists/*
-
-# Create a non-root user
-RUN groupadd -g 1001 -r s1ap && \
-    useradd -u 1001 -r -g s1ap -s /bin/bash s1ap
 
 # Set working directory
 WORKDIR /app
 
-    # Copy the built binary
-    COPY --from=builder /app/s1ap-analyzer .
-    
-    # Copy additional files
-    COPY --from=builder /app/mcc-mnc-table.json ./mcc-mnc-table.json
+# Copy the built binary
+COPY --from=builder /app/s1ap-analyzer .
+
+# Copy additional files
+COPY --from=builder /app/mcc-mnc-table.json ./mcc-mnc-table.json
 
 # Create directories for output
-RUN mkdir -p /app/output /app/data && \
-    chown -R s1ap:s1ap /app
+RUN mkdir -p /app/output /app/data
 
-# Switch to non-root user
-USER s1ap
+# Run as root for network access (required for Kubernetes)
+USER root
 
-# Expose any ports if needed (for future web interface)
-# EXPOSE 8080
-
-# Default command
-ENTRYPOINT ["bash"]
-
+# Flexible entrypoint for Kubernetes
+ENTRYPOINT ["./s1ap-analyzer"]
+CMD ["-help"]

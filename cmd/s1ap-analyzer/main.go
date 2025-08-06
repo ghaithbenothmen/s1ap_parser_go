@@ -43,7 +43,19 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"github.com/coreswitch/coreswitch/pkg/db"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	
+	// Parquet support
+	"github.com/xitongsys/parquet-go-source/local"
+	"github.com/xitongsys/parquet-go/writer"
 )
+
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
 
 // OutputFormat represents the different output formats supported
 type OutputFormat string
@@ -71,6 +83,7 @@ type Config struct {
 
 	Interface       string        // Interface réseau pour capture en direct
     Duration        time.Duration // Durée de capture
+    ParquetOutput   string        // Path to store sessions in Parquet format
     
     // Coverage analysis options
     CoverageAnalysis bool   // Enable coverage analysis
@@ -133,6 +146,25 @@ type UeSessionDocument struct {
 type STMSIInfo struct {
 	MMEC  string `bson:"mmec"`  // MME Code
 	MTMSI string `bson:"mtmsi"` // M-TMSI
+}
+
+// SessionParquet représente une session UE pour export Parquet
+type SessionParquet struct {
+	SessionID           string `parquet:"name=session_id, type=BYTE_ARRAY, convertedtype=UTF8"`
+	MmeUeS1apID         int64  `parquet:"name=mme_ue_s1ap_id, type=INT64"`
+	EnbUeS1apID         int64  `parquet:"name=enb_ue_s1ap_id, type=INT64"`
+	SrcIP               string `parquet:"name=src_ip, type=BYTE_ARRAY, convertedtype=UTF8"`
+	DstIP               string `parquet:"name=dst_ip, type=BYTE_ARRAY, convertedtype=UTF8"`
+	Status              string `parquet:"name=status, type=BYTE_ARRAY, convertedtype=UTF8"`
+	CreationTimestamp   int64  `parquet:"name=creation_timestamp, type=INT64, convertedtype=TIMESTAMP_MILLIS"`
+	LastUpdate          int64  `parquet:"name=last_update, type=INT64, convertedtype=TIMESTAMP_MILLIS"`
+	MessageCount        int32  `parquet:"name=message_count, type=INT32"`
+	FirstProcedure      string `parquet:"name=first_procedure, type=BYTE_ARRAY, convertedtype=UTF8"`
+	LastProcedure       string `parquet:"name=last_procedure, type=BYTE_ARRAY, convertedtype=UTF8"`
+	ProcedureStatsJSON  string `parquet:"name=procedure_stats_json, type=BYTE_ARRAY, convertedtype=UTF8"`
+	MessagesJSON        string `parquet:"name=messages_json, type=BYTE_ARRAY, convertedtype=UTF8"`
+	STMSI_MMEC          string `parquet:"name=stmsi_mmec, type=BYTE_ARRAY, convertedtype=UTF8"`
+	STMSI_MTMSI         string `parquet:"name=stmsi_mtmsi, type=BYTE_ARRAY, convertedtype=UTF8"`
 }
 
 // String retourne une représentation string du S-TMSI
@@ -204,6 +236,7 @@ func parseFlags() *Config {
     flag.StringVar(&config.MongoCollection, "mongo-collection", "messages", "MongoDB collection name for S1AP messages")
     flag.StringVar(&config.SessionsFile, "sessions-file", "completed_sessions.json", "Path to store completed sessions JSON file")
     flag.StringVar(&config.JSONOutput, "json-output", "", "Path to store decoded packets JSON file (for verification)")
+    flag.StringVar(&config.ParquetOutput, "parquet-output", "", "Path to store completed sessions in Parquet format")
 
     // Coverage analysis flags
     flag.BoolVar(&config.CoverageAnalysis, "coverage-analysis", false, "Enable radio coverage analysis")
@@ -247,6 +280,10 @@ type Analyzer struct {
 	jsonMessages []*S1APMessage
 	jsonMutex    sync.Mutex
 	
+	// Parquet output support
+	parquetSessions []*SessionParquet
+	parquetMutex    sync.Mutex
+	
 	// Coverage analysis
 	coverageAnalyzer *CoverageAnalyzer
 }
@@ -259,7 +296,8 @@ func NewAnalyzer(config *Config) *Analyzer {
 			ProcedureStats: make(map[string]int),
 			StartTime:      time.Now(),
 		},
-		jsonMessages: make([]*S1APMessage, 0),
+		jsonMessages:    make([]*S1APMessage, 0),
+		parquetSessions: make([]*SessionParquet, 0),
 	}
 
 	// Initialize coverage analyzer if enabled
@@ -317,6 +355,13 @@ func (a *Analyzer) Run() error {
             a.activeSessionHandlers.Wait()
         }
         
+        // Écrire le fichier Parquet avec toutes les sessions complétées
+        if a.config.ParquetOutput != "" {
+            if err := a.writeParquetFile(); err != nil {
+                log.Printf("ERROR: Failed to write Parquet output: %v", err)
+            }
+        }
+        
         a.stats.EndTime = time.Now()
         a.stats.ProcessingTime = a.stats.EndTime.Sub(a.stats.StartTime)
     }()
@@ -328,17 +373,42 @@ func (a *Analyzer) Run() error {
     var handle *pcap.Handle
     var err error
 
-    // NOUVEAU : Support pour capture en temps réel
+    // NOUVEAU : Support pour capture en temps réel amélioré
     if a.config.Interface != "" {
-        // Capture en temps réel
-        handle, err = pcap.OpenLive(a.config.Interface, 1600, true, pcap.BlockForever)
+        // Capture en temps réel avec buffer plus large et timeout plus court
+        handle, err = pcap.OpenLive(a.config.Interface, 65536, true, 1*time.Second)
         if err != nil {
             return fmt.Errorf("failed to open interface %s: %w", a.config.Interface, err)
         }
         
-        // Filtre pour S1AP (port 36412)
-        if err := handle.SetBPFFilter("port 36412"); err != nil {
-            return fmt.Errorf("failed to set BPF filter: %w", err)
+        // Essayer plusieurs filtres BPF progressivement
+        filters := []string{
+            "port 36412",                    // S1AP standard
+            "sctp",                          // Tout SCTP
+            "ip proto 132",                  // SCTP par numéro de protocole
+            "",                              // Pas de filtre du tout
+        }
+        
+        filterApplied := false
+        for _, filter := range filters {
+            if filter == "" {
+                log.Printf("INFO: Using no BPF filter (capturing all traffic)")
+                filterApplied = true
+                break
+            }
+            
+            if err := handle.SetBPFFilter(filter); err != nil {
+                log.Printf("WARN: Failed to set BPF filter '%s': %v - trying next filter", filter, err)
+                continue
+            }
+            
+            log.Printf("INFO: Successfully applied BPF filter: '%s'", filter)
+            filterApplied = true
+            break
+        }
+        
+        if !filterApplied {
+            log.Printf("WARN: No BPF filter could be applied, proceeding without filter")
         }
         
         log.Printf("INFO: Started live capture on interface %s", a.config.Interface)
@@ -825,7 +895,7 @@ func (a *Analyzer) handleCompletedSession(mmeID, enbID int64) error {
 	session.Status = "completed"
 	session.LastUpdate = time.Now()
 
-	// 2. Sauvegarder la session dans le fichier JSON
+	// 2. Sauvegarder la session dans le fichier JSON et Parquet
 	if err := a.appendSessionToFile(&session); err != nil {
 		log.Printf("ERROR: Failed to save completed session to file: %v", err)
 		// Ne pas arrêter le processus, mais continuer avec la suppression MongoDB
@@ -834,6 +904,13 @@ func (a *Analyzer) handleCompletedSession(mmeID, enbID int64) error {
 			session.SessionID, session.EnbUeS1apID, session.MmeUeS1apID, session.MessageCount)
 		// Incrémenter le compteur de sessions terminées
 		a.stats.CompletedSessions++
+	}
+	
+	// Ajouter à la liste Parquet si l'export Parquet est activé
+	if a.config.ParquetOutput != "" {
+		if err := a.addSessionToParquet(&session); err != nil {
+			log.Printf("ERROR: Failed to add session to Parquet buffer: %v", err)
+		}
 	}
 
 	// 3. Supprimer la session de MongoDB
@@ -1135,6 +1212,100 @@ func (a *Analyzer) appendSessionToFile(session *UeSessionDocument) error {
 	return nil
 }
 
+// addSessionToParquet ajoute une session terminée au buffer Parquet
+func (a *Analyzer) addSessionToParquet(session *UeSessionDocument) error {
+	a.parquetMutex.Lock()
+	defer a.parquetMutex.Unlock()
+
+	// Convertir UeSessionDocument en SessionParquet
+	parquetSession := &SessionParquet{
+		SessionID:         session.SessionID,
+		MmeUeS1apID:       session.MmeUeS1apID,
+		EnbUeS1apID:       session.EnbUeS1apID,
+		SrcIP:             session.SrcIP,
+		DstIP:             session.DstIP,
+		Status:            session.Status,
+		CreationTimestamp: session.CreationTimestamp.UnixMilli(),
+		LastUpdate:        session.LastUpdate.UnixMilli(),
+		MessageCount:      int32(session.MessageCount),
+		FirstProcedure:    session.FirstProcedure,
+		LastProcedure:     session.LastProcedure,
+	}
+
+	// Sérialiser ProcedureStats en JSON
+	if len(session.ProcedureStats) > 0 {
+		if statsJSON, err := json.Marshal(session.ProcedureStats); err == nil {
+			parquetSession.ProcedureStatsJSON = string(statsJSON)
+		}
+	}
+
+	// Sérialiser Messages en JSON (en gardant seulement les infos essentielles)
+	if len(session.Messages) > 0 {
+		simplifiedMessages := make([]map[string]interface{}, len(session.Messages))
+		for i, msg := range session.Messages {
+			simplifiedMessages[i] = map[string]interface{}{
+				"packet_number":   msg.PacketNumber,
+				"timestamp":       msg.Timestamp.Unix(),
+				"procedure_name":  msg.ProcedureName,
+				"procedure_code":  msg.ProcedureCode,
+				"pdu_type":        msg.PDUType,
+				"src_ip":          msg.SrcIP,
+				"dst_ip":          msg.DstIP,
+			}
+		}
+		if messagesJSON, err := json.Marshal(simplifiedMessages); err == nil {
+			parquetSession.MessagesJSON = string(messagesJSON)
+		}
+	}
+
+	// Ajouter les informations S-TMSI si disponibles
+	if session.STMSI != nil {
+		parquetSession.STMSI_MMEC = session.STMSI.MMEC
+		parquetSession.STMSI_MTMSI = session.STMSI.MTMSI
+	}
+
+	// Ajouter au buffer Parquet
+	a.parquetSessions = append(a.parquetSessions, parquetSession)
+
+	return nil
+}
+
+// writeParquetFile écrit toutes les sessions accumulées dans le fichier Parquet
+func (a *Analyzer) writeParquetFile() error {
+	if a.config.ParquetOutput == "" || len(a.parquetSessions) == 0 {
+		return nil
+	}
+
+	a.parquetMutex.Lock()
+	defer a.parquetMutex.Unlock()
+
+	// Créer le writer de fichier local
+	fw, err := local.NewLocalFileWriter(a.config.ParquetOutput)
+	if err != nil {
+		return fmt.Errorf("failed to create parquet file: %w", err)
+	}
+	defer fw.Close()
+
+	// Créer le writer Parquet
+	pw, err := writer.NewParquetWriter(fw, new(SessionParquet), 4)
+	if err != nil {
+		return fmt.Errorf("failed to create parquet writer: %w", err)
+	}
+	defer pw.WriteStop()
+
+	// Écrire toutes les sessions
+	for _, session := range a.parquetSessions {
+		if err := pw.Write(session); err != nil {
+			return fmt.Errorf("failed to write session to parquet: %w", err)
+		}
+	}
+
+	log.Printf("INFO: Successfully wrote %d completed sessions to Parquet: %s", 
+		len(a.parquetSessions), a.config.ParquetOutput)
+
+	return nil
+}
+
 // handleCompletedSessionByEnbID gère la finalisation d'une session UE en utilisant seulement l'eNB ID
 func (a *Analyzer) handleCompletedSessionByEnbID(enbID int64) error {
 	if a.mongoCollection == nil {
@@ -1169,6 +1340,13 @@ func (a *Analyzer) handleCompletedSessionByEnbID(enbID int64) error {
 		log.Printf("INFO: Session completed and saved to file - SessionID: %s (eNB: %d, MME: %d, Messages: %d)", 
 			session.SessionID, session.EnbUeS1apID, session.MmeUeS1apID, session.MessageCount)
 		a.stats.CompletedSessions++
+	}
+	
+	// Ajouter à la liste Parquet si l'export Parquet est activé
+	if a.config.ParquetOutput != "" {
+		if err := a.addSessionToParquet(&session); err != nil {
+			log.Printf("ERROR: Failed to add session to Parquet buffer: %v", err)
+		}
 	}
 
 	// Supprimer la session de MongoDB
@@ -1229,20 +1407,45 @@ func (a *Analyzer) analyzeAndStorePackets(handle *pcap.Handle) error {
     if a.config.Duration > 0 && a.config.Interface != "" {
         timeout = time.After(a.config.Duration)
     }
+    
+    // Variables pour statistiques en temps réel
+    lastStatsTime := time.Now()
+    packetsSeenSinceLastStats := 0
+    s1apPacketsFound := 0
 
     for {
         select {
         case <-timeout:
             log.Printf("INFO: Capture duration reached, stopping analysis")
+            log.Printf("INFO: Final stats - Total packets: %d, S1AP packets: %d", a.stats.TotalFrames, a.stats.S1APFrames)
             return nil
             
         case packet, ok := <-packetSource.Packets():
             if !ok {
                 // Canal fermé (fin de fichier PCAP)
+                log.Printf("INFO: Packet source closed, stopping analysis")
+                log.Printf("INFO: Final stats - Total packets: %d, S1AP packets: %d", a.stats.TotalFrames, a.stats.S1APFrames)
                 return nil
             }
             
             a.stats.TotalFrames++
+            packetsSeenSinceLastStats++
+
+            // Debug détaillé pour les premiers paquets
+            if a.config.Debug && a.stats.TotalFrames <= 20 {
+                log.Printf("DEBUG: Packet #%d - Layers: %v", a.stats.TotalFrames, packet.Layers())
+                if ipLayer := packet.Layer(layers.LayerTypeIPv4); ipLayer != nil {
+                    ip := ipLayer.(*layers.IPv4)
+                    log.Printf("DEBUG: IPv4 - Src: %s, Dst: %s, Protocol: %v", ip.SrcIP, ip.DstIP, ip.Protocol)
+                }
+                if sctpLayer := packet.Layer(layers.LayerTypeSCTP); sctpLayer != nil {
+                    log.Printf("DEBUG: SCTP layer found")
+                }
+                if tcpLayer := packet.Layer(layers.LayerTypeTCP); tcpLayer != nil {
+                    tcp := tcpLayer.(*layers.TCP)
+                    log.Printf("DEBUG: TCP - Src port: %d, Dst port: %d", tcp.SrcPort, tcp.DstPort)
+                }
+            }
 
             if a.config.Limit > 0 && a.stats.TotalFrames > a.config.Limit {
                 log.Printf("INFO: Packet limit reached, stopping analysis")
@@ -1252,6 +1455,15 @@ func (a *Analyzer) analyzeAndStorePackets(handle *pcap.Handle) error {
             s1apMessages := a.extractS1APMessages(packet)
             if len(s1apMessages) > 0 {
                 a.stats.S1APFrames++
+                s1apPacketsFound++
+                
+                if a.config.Debug || a.stats.S1APFrames <= 10 {
+                    log.Printf("INFO: S1AP message(s) found in packet #%d (total S1AP: %d)", a.stats.TotalFrames, a.stats.S1APFrames)
+                    for _, msg := range s1apMessages {
+                        log.Printf("INFO: - %s", msg.ProcedureName)
+                    }
+                }
+                
                 for _, msg := range s1apMessages {
                     if err := a.processAndStoreMessage(msg); err != nil {
                         log.Printf("WARN: Failed to store message for packet %d: %v", msg.PacketNumber, err)
@@ -1259,46 +1471,80 @@ func (a *Analyzer) analyzeAndStorePackets(handle *pcap.Handle) error {
                 }
             }
             
-            // Afficher des stats périodiques pour la capture en temps réel
-            if a.config.Interface != "" && a.stats.TotalFrames%1000 == 0 {
-                log.Printf("INFO: Processed %d frames, found %d S1AP frames", 
-                    a.stats.TotalFrames, a.stats.S1APFrames)
+            // Statistiques périodiques pour la capture en temps réel
+            if a.config.Interface != "" {
+                now := time.Now()
+                if now.Sub(lastStatsTime) >= 10*time.Second {
+                    rate := float64(packetsSeenSinceLastStats) / 10.0
+                    s1apRate := float64(s1apPacketsFound) / 10.0
+                    
+                    log.Printf("INFO: Live stats - Total: %d pkts (%.1f/s), S1AP: %d pkts (%.1f/s)", 
+                        a.stats.TotalFrames, rate, a.stats.S1APFrames, s1apRate)
+                    
+                    // Reset des compteurs
+                    lastStatsTime = now
+                    packetsSeenSinceLastStats = 0
+                    s1apPacketsFound = 0
+                    
+                    // Alerte si pas de S1AP trouvé
+                    if a.stats.S1APFrames == 0 && a.stats.TotalFrames > 1000 {
+                        log.Printf("WARN: No S1AP packets found after %d packets - check interface traffic", a.stats.TotalFrames)
+                    }
+                }
             }
         }
     }
 }
 
 func (a *Analyzer) extractS1APMessages(packet gopacket.Packet) []*S1APMessage {
-	// First try to extract SCTP layer
-	sctpLayer := packet.Layer(layers.LayerTypeSCTP)
+	// Debug pour les premiers paquets si activé
+	if a.config.Debug && a.stats.TotalFrames <= 50 {
+		log.Printf("DEBUG: Analyzing packet #%d for S1AP content", a.stats.TotalFrames)
+	}
+
+	// Essayer plusieurs méthodes d'extraction
 	var payload []byte
-	
-	if sctpLayer != nil {
+	var method string
+
+	// Méthode 1: SCTP layer (principale)
+	if sctpLayer := packet.Layer(layers.LayerTypeSCTP); sctpLayer != nil {
 		sctp := sctpLayer.(*layers.SCTP)
 		payload = sctp.LayerPayload()
-	} else {
-		// Fallback: check if this could be S1AP over IP (sometimes SCTP detection fails)
-		// S1AP typically uses port 36412
+		method = "SCTP"
+		
+		if a.config.Debug && a.stats.TotalFrames <= 50 && len(payload) > 0 {
+			log.Printf("DEBUG: SCTP payload length: %d, first bytes: %x", 
+				len(payload), payload[:min(len(payload), 16)])
+		}
+	}
+
+	// Méthode 2: TCP sur port 36412
+	if len(payload) == 0 {
 		if tcpLayer := packet.Layer(layers.LayerTypeTCP); tcpLayer != nil {
 			tcp := tcpLayer.(*layers.TCP)
 			if tcp.SrcPort == 36412 || tcp.DstPort == 36412 {
 				payload = tcp.LayerPayload()
+				method = "TCP-36412"
 			}
-		} else if udpLayer := packet.Layer(layers.LayerTypeUDP); udpLayer != nil {
+		}
+	}
+
+	// Méthode 3: UDP sur port 36412
+	if len(payload) == 0 {
+		if udpLayer := packet.Layer(layers.LayerTypeUDP); udpLayer != nil {
 			udp := udpLayer.(*layers.UDP)
 			if udp.SrcPort == 36412 || udp.DstPort == 36412 {
 				payload = udp.LayerPayload()
+				method = "UDP-36412"
 			}
 		}
-		
-		// Last resort: check application data in any IP packet on port 36412
-		if len(payload) == 0 {
-			if ipLayer := packet.Layer(layers.LayerTypeIPv4); ipLayer != nil {
-				// Try to extract from application layer
-				if appLayer := packet.ApplicationLayer(); appLayer != nil {
-					payload = appLayer.Payload()
-				}
-			}
+	}
+
+	// Méthode 4: Application layer (dernier recours)
+	if len(payload) == 0 {
+		if appLayer := packet.ApplicationLayer(); appLayer != nil {
+			payload = appLayer.Payload()
+			method = "Application"
 		}
 	}
 	
@@ -1306,13 +1552,21 @@ func (a *Analyzer) extractS1APMessages(packet gopacket.Packet) []*S1APMessage {
 		return nil
 	}
 
-	// Extract S1AP data from payload
+	// Extraire les données S1AP
 	s1apData := a.extractS1APFromSCTP(payload)
 	if len(s1apData) == 0 {
+		if a.config.Debug && len(payload) > 0 && a.stats.TotalFrames <= 50 {
+			log.Printf("DEBUG: No S1AP data from %s payload (len=%d), first bytes: %x", 
+				method, len(payload), payload[:min(len(payload), 32)])
+		}
 		return nil
 	}
 
-	// Split into individual S1AP messages
+	if a.config.Debug && a.stats.TotalFrames <= 10 {
+		log.Printf("DEBUG: S1AP data extracted via %s, length: %d", method, len(s1apData))
+	}
+
+	// Diviser en messages S1AP individuels
 	messagePayloads := a.splitS1APMessages(s1apData)
 	var messages []*S1APMessage
 
@@ -1322,8 +1576,16 @@ func (a *Analyzer) extractS1APMessages(packet gopacket.Packet) []*S1APMessage {
 			messages = append(messages, message)
 			a.stats.SuccessfulDecodes++
 			a.stats.ProcedureStats[message.ProcedureName]++
+			
+			if a.config.Debug {
+				log.Printf("DEBUG: Parsed S1AP: %s (packet #%d)", message.ProcedureName, a.stats.TotalFrames)
+			}
 		} else {
 			a.stats.FailedDecodes++
+			if a.config.Debug {
+				log.Printf("DEBUG: Failed to parse S1AP from %d bytes (packet #%d)", 
+					len(msgPayload), a.stats.TotalFrames)
+			}
 		}
 	}
 
@@ -1387,13 +1649,6 @@ func (a *Analyzer) isLikelyS1AP(data []byte) bool {
 	}
 
 	return true
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 func (a *Analyzer) splitS1APMessages(data []byte) [][]byte {
