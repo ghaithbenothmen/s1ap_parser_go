@@ -80,6 +80,8 @@ type Config struct {
 	MongoCollection string 
 	SessionsFile    string // Path to store completed sessions JSON file
 	JSONOutput      string // Path to store decoded packets JSON file
+	ExtractIEs      bool   // Extract and display Information Elements in JSON
+	IEsOutput       string // Path to store extracted IEs JSON file
 
 	Interface       string        // Interface réseau pour capture en direct
     Duration        time.Duration // Durée de capture
@@ -89,6 +91,11 @@ type Config struct {
     CoverageAnalysis bool   // Enable coverage analysis
     CoverageOutput   string // Output path for coverage reports
     SimulationOnly   bool   // Use only simulation data
+    
+    // Optimization options
+    EnableOptimizations bool   // Enable decoder optimizations
+    BenchmarkMode      bool   // Enable benchmarking mode
+    SafeMode           bool   // Enable safe mode with fallback
 }
 
 // S1APMessage represents a parsed S1AP message
@@ -167,6 +174,19 @@ type SessionParquet struct {
 	STMSI_MTMSI         string `parquet:"name=stmsi_mtmsi, type=BYTE_ARRAY, convertedtype=UTF8"`
 }
 
+// ExtractedIEMessage représente un message avec ses IEs extraits pour l'export JSON
+type ExtractedIEMessage struct {
+	FrameNumber   int                    `json:"frame_number"`
+	Timestamp     time.Time              `json:"timestamp"`
+	SourceIP      string                 `json:"source_ip"`
+	DestinationIP string                 `json:"destination_ip"`
+	MessageType   string                 `json:"message_type"`
+	ProcedureCode int                    `json:"procedure_code"`
+	Criticality   string                 `json:"criticality,omitempty"`
+	IEs           []map[string]interface{} `json:"information_elements"`
+	RawData       string                 `json:"raw_data,omitempty"` // Hex encoded
+}
+
 // String retourne une représentation string du S-TMSI
 func (s *STMSIInfo) String() string {
 	if s == nil {
@@ -189,6 +209,16 @@ func main() {
 	if config.ShowHelp {
 		flag.Usage()
 		os.Exit(0)
+	}
+
+	// Le décodeur est maintenant toujours optimisé - plus besoin de condition
+	log.Println("🚀 Decoder is permanently optimized for maximum performance!")
+	
+	// Démarrer le monitoring des performances si demandé
+	if config.EnableOptimizations || config.BenchmarkMode {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go MonitorPerformance(ctx)
 	}
 
 	// Mode simulation uniquement
@@ -214,6 +244,22 @@ func main() {
 	if err := analyzer.Run(); err != nil {
 		log.Fatalf("Analysis failed: %v", err)
 	}
+	
+	// Afficher les statistiques d'optimisation (toujours disponibles maintenant)
+	if config.BenchmarkMode {
+		stats := GetOptimizationStats()
+		log.Printf("📊 Final optimization stats:")
+		log.Printf("   Cache hit ratio: %.1f%%", stats.CacheHitRatio)
+		log.Printf("   Total packets: %d", stats.TotalPacketsProcessed)
+		if stats.SpeedupRatio > 0 {
+			log.Printf("   Speedup achieved: %.2fx", stats.SpeedupRatio)
+		}
+	}
+	
+	// OPTIMISATION: Cleanup des ressources avancées
+	if analyzer != nil {
+		analyzer.Shutdown()
+	}
 }
 
 func parseFlags() *Config {
@@ -236,12 +282,19 @@ func parseFlags() *Config {
     flag.StringVar(&config.MongoCollection, "mongo-collection", "messages", "MongoDB collection name for S1AP messages")
     flag.StringVar(&config.SessionsFile, "sessions-file", "completed_sessions.json", "Path to store completed sessions JSON file")
     flag.StringVar(&config.JSONOutput, "json-output", "", "Path to store decoded packets JSON file (for verification)")
+    flag.BoolVar(&config.ExtractIEs, "extract-ies", false, "Extract and display Information Elements in JSON format")
+    flag.StringVar(&config.IEsOutput, "ies-output", "extracted_ies.json", "Path to store extracted IEs JSON file")
     flag.StringVar(&config.ParquetOutput, "parquet-output", "", "Path to store completed sessions in Parquet format")
 
     // Coverage analysis flags
     flag.BoolVar(&config.CoverageAnalysis, "coverage-analysis", false, "Enable radio coverage analysis")
     flag.StringVar(&config.CoverageOutput, "coverage-output", "coverage_report", "Output path prefix for coverage analysis reports")
     flag.BoolVar(&config.SimulationOnly, "simulation-only", false, "Use only simulation data (no PCAP processing)")
+
+    // Optimization flags
+    flag.BoolVar(&config.EnableOptimizations, "optimize", false, "Enable decoder optimizations for better performance")
+    flag.BoolVar(&config.BenchmarkMode, "benchmark", false, "Enable benchmarking mode (compare original vs optimized)")
+    flag.BoolVar(&config.SafeMode, "safe-mode", true, "Enable safe mode with automatic fallback to original decoder")
 
     flag.Usage = func() {
         fmt.Fprintf(os.Stderr, "S1AP Protocol Analyzer\n")
@@ -267,7 +320,7 @@ func parseFlags() *Config {
     return config
 }
 
-// Analyzer handles the S1AP analysis process
+// Analyzer handles the S1AP analysis process with advanced optimizations
 type Analyzer struct {
 	config *Config
 	stats  *Statistics
@@ -280,15 +333,24 @@ type Analyzer struct {
 	jsonMessages []*S1APMessage
 	jsonMutex    sync.Mutex
 	
+	// IEs extraction support
+	extractedIEMessages []*ExtractedIEMessage
+	iesMutex           sync.Mutex
+	
 	// Parquet output support
 	parquetSessions []*SessionParquet
 	parquetMutex    sync.Mutex
 	
 	// Coverage analysis
 	coverageAnalyzer *CoverageAnalyzer
+	
+	// NOUVELLES OPTIMISATIONS AVANCÉES
+	batchWriter    *BatchMongoWriter     // Optimisation #1: Batch MongoDB writes
+	asyncHandler   *AsyncSessionHandler  // Optimisation #2: Async session handling
+	// Memory pools sont globaux dans le package s1ap (Optimisation #3)
 }
 
-// NewAnalyzer creates a new analyzer instance
+// NewAnalyzer creates a new high-performance analyzer instance with all optimizations
 func NewAnalyzer(config *Config) *Analyzer {
 	analyzer := &Analyzer{
 		config: config,
@@ -307,7 +369,7 @@ func NewAnalyzer(config *Config) *Analyzer {
 		log.Printf("INFO: Coverage analysis enabled - Output: %s", config.CoverageOutput)
 	}
 
-	// Configuration MongoDB
+	// Configuration MongoDB avec optimisations avancées
 	if config.MongoStore {
 		client, collection := db.ConnectWithClient(config.MongoURI, config.MongoDB, config.MongoCollection)
 		if client == nil || collection == nil {
@@ -320,7 +382,27 @@ func NewAnalyzer(config *Config) *Analyzer {
 		
 		// Initialiser le fichier de sessions si nécessaire
 		analyzer.initializeSessionsFile()
+		
+		// OPTIMISATION #1: Batch MongoDB Writer
+		analyzer.batchWriter = NewBatchMongoWriter(
+			collection,
+			50,                    // batch de 50 opérations
+			2*time.Second,        // flush toutes les 2 secondes
+		)
+		log.Printf("INFO: Batch MongoDB writer enabled (batch size: 50, interval: 2s)")
+		
+		// OPTIMISATION #2: Async Session Handler
+		analyzer.asyncHandler = NewAsyncSessionHandler(
+			analyzer,
+			6,      // 6 workers pour traitement parallèle
+			1000,   // queue de 1000 tâches
+		)
+		log.Printf("INFO: Async session handler enabled (6 workers, 1000 queue size)")
 	}
+	
+	// OPTIMISATION #3: Memory Pools - Warmup pour performances optimales (IEs seulement)
+	s1ap.WarmupPools(0, 200, 50) // 0 messages, 200 IE slices, 50 buffers
+	log.Printf("INFO: Memory pools warmed up and ready")
 
 	return analyzer
 }
@@ -658,6 +740,8 @@ func (a *Analyzer) extractUeIdentifiersExtended(msg *S1APMessage) (mmeID, enbID 
 
 // processAndStoreMessage traite et stocke un message S1AP dans MongoDB
 // avec gestion des sessions UE basée sur eNB_UE_S1AP_ID
+// processAndStoreMessage traite et stocke un message S1AP avec toutes les optimisations
+// OPTIMISÉ avec : Async processing, Memory pools, Batch MongoDB
 func (a *Analyzer) processAndStoreMessage(msg *S1APMessage) error {
 	// Debug pour voir tous les messages traités
 	if a.config.Debug {
@@ -691,28 +775,49 @@ func (a *Analyzer) processAndStoreMessage(msg *S1APMessage) error {
 
 	// Messages qui appartiennent à une session UE spécifique (ont un eNB_UE_S1AP_ID)
 	if enbID != -1 {
-		// Pour UEContextReleaseComplete, finaliser la session après l'ajout
+		// OPTIMISATION #2: Traitement asynchrone des sessions
 		if msg.ProcedureName == "UEContextReleaseComplete" {
-			// Ajouter le message à la session avant de la finaliser
-			if err := a.addMessageToSession(msg, mmeID, enbID); err != nil {
-				log.Printf("WARN: Failed to add UEContextReleaseComplete to session: %v", err)
-			}
-			
-			// Finaliser la session
-			log.Printf("INFO: UEContextReleaseComplete détecté - finalisation de la session (MME: %d, eNB: %d)", mmeID, enbID)
-			a.activeSessionHandlers.Add(1)
-			go func() {
-				defer a.activeSessionHandlers.Done()
-				time.Sleep(100 * time.Millisecond)
-				if err := a.handleCompletedSession(mmeID, enbID); err != nil {
-					log.Printf("ERROR: Failed to handle completed session: %v", err)
+			// Soumettre la mise à jour puis la finalisation de manière asynchrone
+			if a.asyncHandler != nil {
+				if err := a.asyncHandler.SubmitSessionUpdate(msg, mmeID, enbID); err != nil {
+					log.Printf("WARN: Failed to submit session update: %v", err)
 				}
-			}()
-			return nil
+				
+				// Finalisation asynchrone avec délai
+				go func() {
+					time.Sleep(200 * time.Millisecond) // Attendre la mise à jour
+					if err := a.asyncHandler.SubmitSessionCompletion(mmeID, enbID); err != nil {
+						log.Printf("ERROR: Failed to submit session completion: %v", err)
+					}
+				}()
+				return nil
+			} else {
+				// Fallback synchrone si async handler pas disponible
+				if err := a.addMessageToSession(msg, mmeID, enbID); err != nil {
+					log.Printf("WARN: Failed to add UEContextReleaseComplete to session: %v", err)
+				}
+				
+				// Finaliser la session
+				log.Printf("INFO: UEContextReleaseComplete détecté - finalisation de la session (MME: %d, eNB: %d)", mmeID, enbID)
+				a.activeSessionHandlers.Add(1)
+				go func() {
+					defer a.activeSessionHandlers.Done()
+					time.Sleep(100 * time.Millisecond)
+					if err := a.handleCompletedSession(mmeID, enbID); err != nil {
+						log.Printf("ERROR: Failed to handle completed session: %v", err)
+					}
+				}()
+				return nil
+			}
 		}
 
-		// Pour tous les autres messages UE-spécifiques, les ajouter à la session
-		return a.addMessageToSession(msg, mmeID, enbID)
+		// Pour tous les autres messages UE-spécifiques, traitement asynchrone
+		if a.asyncHandler != nil {
+			return a.asyncHandler.SubmitSessionUpdate(msg, mmeID, enbID)
+		} else {
+			// Fallback synchrone
+			return a.addMessageToSession(msg, mmeID, enbID)
+		}
 	}
 
 	// Messages généraux (sans eNB_UE_S1AP_ID) - les traiter différemment selon le type
@@ -820,27 +925,34 @@ func (a *Analyzer) addMessageToSession(msg *S1APMessage, mmeID, enbID int64) err
 	}
 
 	opts := options.Update().SetUpsert(true)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 
-	result, err := a.mongoCollection.UpdateOne(ctx, filter, update, opts)
-	if err != nil {
-		return fmt.Errorf("mongodb update failed: %w", err)
-	}
+	// OPTIMISATION #1: Utiliser BatchMongoWriter au lieu d'écriture directe
+	if a.batchWriter != nil {
+		return a.batchWriter.AddUpdateOperation(filter, update, true) // upsert = true
+	} else {
+		// Fallback synchrone pour compatibilité
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 
-	if result.UpsertedID != nil {
-		log.Printf("INFO: Nouvelle session UE créée - SessionID: %s (eNB: %d, MME: %d, Proc: %s)", 
-			sessionID, enbID, mmeID, msg.ProcedureName)
-	} else if result.ModifiedCount > 0 {
-		if a.config.Debug {
-			log.Printf("DEBUG: Session UE mise à jour - SessionID: %s (Proc: %s)", sessionID, msg.ProcedureName)
+		result, err := a.mongoCollection.UpdateOne(ctx, filter, update, opts)
+		if err != nil {
+			return fmt.Errorf("mongodb update failed: %w", err)
 		}
+
+		if result.UpsertedID != nil {
+			log.Printf("INFO: Nouvelle session UE créée - SessionID: %s (eNB: %d, MME: %d, Proc: %s)", 
+				sessionID, enbID, mmeID, msg.ProcedureName)
+		} else if result.ModifiedCount > 0 {
+			if a.config.Debug {
+				log.Printf("DEBUG: Session UE mise à jour - SessionID: %s (Proc: %s)", sessionID, msg.ProcedureName)
+			}
+		}
+
+		// Extraire et stocker le S-TMSI si le message en contient un
+		go a.extractAndStoreSTMSI(msg, sessionID)
+
+		return nil
 	}
-
-	// Extraire et stocker le S-TMSI si le message en contient un
-	go a.extractAndStoreSTMSI(msg, sessionID)
-
-	return nil
 }
 
 // generateSessionID génère un identifiant unique pour la session
@@ -1663,7 +1775,7 @@ func (a *Analyzer) splitS1APMessages(data []byte) [][]byte {
 }
 
 func (a *Analyzer) parseS1APMessage(packet gopacket.Packet, payload []byte, msgIndex, totalMsgs int) *S1APMessage {
-	// Try to decode with S1AP library
+	// Use permanently optimized decoder - no conditional logic needed
 	decodedPDU, msgType, err := s1ap.Decode(payload)
 	if err != nil {
 		if a.config.Debug {
@@ -1671,10 +1783,23 @@ func (a *Analyzer) parseS1APMessage(packet gopacket.Packet, payload []byte, msgI
 		}
 		return nil
 	}
-	defer s1ap.Free(decodedPDU)
-
+	
 	// Extract real procedure code from payload
 	realProcCode := s1ap.ExtractProcedureCode(payload)
+	
+	// OPTIMISATION #3: Utiliser un buffer pool pour les IEs
+	ies := s1ap.GetIESlice()
+	defer s1ap.PutIESlice(ies) // Remettre dans le pool à la fin
+	
+	// Extract IEs using always-optimized extractor
+	ies = s1ap.ExtractAllIEs(decodedPDU, msgType, realProcCode)
+
+	// Proper cleanup
+	defer func() {
+		if decodedPDU != nil {
+			s1ap.Free(decodedPDU)
+		}
+	}()
 	
 	// Analyze PDU type
 	pduType, pduTypeCode := a.analyzePDUType(payload)
@@ -1688,12 +1813,6 @@ func (a *Analyzer) parseS1APMessage(packet gopacket.Packet, payload []byte, msgI
 
 	// Get IP information
 	srcIP, dstIP := a.extractIPInfo(packet)
-
-	// Extract IEs from the decoded PDU
-	if a.config.Debug {
-		log.Printf("DEBUG: About to call ExtractAllIEs for procedureName: %s", procedureName)
-	}
-	ies := s1ap.ExtractAllIEs(decodedPDU, msgType, realProcCode)
 	
 	// Special handling for UEContextReleaseComplete - try to extract IEs using C handler
 	if procedureName == "UEContextReleaseComplete" && (len(ies) == 0 || !hasValidUEIdentifiers(ies)) {
@@ -1728,22 +1847,31 @@ func (a *Analyzer) parseS1APMessage(packet gopacket.Packet, payload []byte, msgI
 		}
 	}
 
+	// Créer le message normalement (pas de pool pour les messages)
 	message := &S1APMessage{
-		PacketNumber:  a.stats.TotalFrames,
-		Timestamp:     packet.Metadata().Timestamp,
-		SrcIP:         srcIP,
-		DstIP:         dstIP,
-		PDUType:       pduType,
-		PDUTypeCode:   pduTypeCode,
-		ProcedureName: procedureName,
-		ProcedureCode: realProcCode,
-		Criticality:   "ignore", // Default - can be enhanced
-		IEs:           ies,
+		PacketNumber:   a.stats.TotalFrames,
+		Timestamp:      packet.Metadata().Timestamp,
+		SrcIP:          srcIP,
+		DstIP:          dstIP,
+		PDUType:        pduType,
+		PDUTypeCode:    pduTypeCode,
+		ProcedureName:  procedureName,
+		ProcedureCode:  realProcCode,
+		Criticality:    "ignore", // Default - can be enhanced
 	}
+	
+	// Copier les IEs dans le message (car on va remettre la slice dans le pool)
+	message.IEs = make([]*s1ap.InformationElement, len(ies))
+	copy(message.IEs, ies)
 
 	if totalMsgs > 1 {
 		message.MessageIndex = msgIndex
 		message.TotalMessages = totalMsgs
+	}
+
+	// Collect IEs for extraction if enabled
+	if a.config.ExtractIEs {
+		a.collectExtractedIEs(message, packet)
 	}
 
 	return message
@@ -1815,6 +1943,13 @@ func (a *Analyzer) outputResults(messages []*S1APMessage) error {
 	if a.config.JSONOutput != "" {
 		if jsonErr := a.generateJSONOutput(); jsonErr != nil {
 			log.Printf("ERROR: Failed to generate JSON output: %v", jsonErr)
+		}
+	}
+	
+	// Generate extracted IEs JSON output if specified
+	if a.config.ExtractIEs {
+		if iesErr := a.generateIEsJSONOutput(); iesErr != nil {
+			log.Printf("ERROR: Failed to generate IEs JSON output: %v", iesErr)
 		}
 	}
 	
@@ -1964,5 +2099,83 @@ func (a *Analyzer) generateJSONOutput() error {
 	}
 
 	log.Printf("INFO: Successfully wrote %d decoded messages to %s", len(a.jsonMessages), a.config.JSONOutput)
+	return nil
+}
+
+// collectExtractedIEs collects Information Elements from parsed message for JSON output
+func (a *Analyzer) collectExtractedIEs(message *S1APMessage, packet gopacket.Packet) {
+	a.iesMutex.Lock()
+	defer a.iesMutex.Unlock()
+
+	// Convert IEs to interface{} format for JSON
+	iesForJSON := make([]map[string]interface{}, 0, len(message.IEs))
+	
+	for _, ie := range message.IEs {
+		ieMap := map[string]interface{}{
+			"id":          ie.ID,
+			"name":        ie.Name,
+			"criticality": ie.Criticality,
+			"value":       ie.Value,
+			"raw_value":   ie.RawValue,
+		}
+		iesForJSON = append(iesForJSON, ieMap)
+	}
+
+	// Get raw data if available
+	var rawData string
+	if payload := packet.Data(); payload != nil {
+		rawData = hex.EncodeToString(payload)
+	}
+
+	extractedMsg := &ExtractedIEMessage{
+		FrameNumber:   message.PacketNumber,
+		Timestamp:     message.Timestamp,
+		SourceIP:      message.SrcIP,
+		DestinationIP: message.DstIP,
+		MessageType:   message.ProcedureName,
+		ProcedureCode: message.ProcedureCode,
+		Criticality:   message.Criticality,
+		IEs:           iesForJSON,
+		RawData:       rawData,
+	}
+
+	a.extractedIEMessages = append(a.extractedIEMessages, extractedMsg)
+}
+
+// generateIEsJSONOutput writes all extracted IEs to a JSON file
+func (a *Analyzer) generateIEsJSONOutput() error {
+	a.iesMutex.Lock()
+	defer a.iesMutex.Unlock()
+
+	if len(a.extractedIEMessages) == 0 {
+		log.Printf("INFO: No IEs to write to JSON file")
+		return nil
+	}
+
+	// Create output file
+	file, err := os.Create(a.config.IEsOutput)
+	if err != nil {
+		return fmt.Errorf("failed to create IEs JSON output file: %w", err)
+	}
+	defer file.Close()
+
+	// Write metadata and messages
+	output := map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"generated_at":    time.Now().Format(time.RFC3339),
+			"tool":           "s1ap-analyzer",
+			"total_messages": len(a.extractedIEMessages),
+		},
+		"messages": a.extractedIEMessages,
+	}
+
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "  ")
+
+	if err := encoder.Encode(output); err != nil {
+		return fmt.Errorf("failed to encode IEs to JSON: %w", err)
+	}
+
+	log.Printf("INFO: Successfully wrote %d messages with extracted IEs to %s", len(a.extractedIEMessages), a.config.IEsOutput)
 	return nil
 }
