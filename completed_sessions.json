@@ -1,0 +1,1198 @@
+[
+  {
+    "SessionID": "enb_1343562_mme_34337230",
+    "MmeUeS1apID": 34337230,
+    "EnbUeS1apID": 1343562,
+    "SrcIP": "10.73.86.146",
+    "DstIP": "10.3.3.112",
+    "Status": "completed",
+    "CreationTimestamp": "2025-08-07T14:28:20.999Z",
+    "LastUpdate": "2025-08-07T15:28:21.201295172+01:00",
+    "MessageCount": 1,
+    "Messages": [
+      {
+        "packet_number": 141,
+        "timestamp": "2025-01-17T08:30:45.015Z",
+        "src_ip": "10.73.86.146",
+        "dst_ip": "10.3.3.112",
+        "pdu_type": "successfulOutcome",
+        "pdu_type_code": 1,
+        "procedure_name": "UEContextReleaseComplete",
+        "procedure_code": 23,
+        "criticality": "ignore",
+        "information_elements": [
+          {
+            "id": 0,
+            "name": "id_MME_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 34337230,
+            "raw_value": "34337230"
+          },
+          {
+            "id": 8,
+            "name": "id_eNB_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 1343562,
+            "raw_value": "1343562"
+          }
+        ]
+      }
+    ],
+    "ProcedureStats": {
+      "UEContextReleaseComplete": 1
+    },
+    "FirstProcedure": "UEContextReleaseComplete",
+    "LastProcedure": "UEContextReleaseComplete",
+    "STMSI": null
+  },
+  {
+    "SessionID": "enb_1659873_mme_171859790",
+    "MmeUeS1apID": 171859790,
+    "EnbUeS1apID": 1659873,
+    "SrcIP": "10.73.82.50",
+    "DstIP": "10.3.3.112",
+    "Status": "completed",
+    "CreationTimestamp": "2025-08-07T14:28:21.147Z",
+    "LastUpdate": "2025-08-07T15:28:21.349686704+01:00",
+    "MessageCount": 1,
+    "Messages": [
+      {
+        "packet_number": 199,
+        "timestamp": "2025-01-17T08:30:45.015Z",
+        "src_ip": "10.73.82.50",
+        "dst_ip": "10.3.3.112",
+        "pdu_type": "successfulOutcome",
+        "pdu_type_code": 1,
+        "procedure_name": "UEContextReleaseComplete",
+        "procedure_code": 23,
+        "criticality": "ignore",
+        "information_elements": [
+          {
+            "id": 0,
+            "name": "id_MME_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 171859790,
+            "raw_value": "171859790"
+          },
+          {
+            "id": 8,
+            "name": "id_eNB_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 1659873,
+            "raw_value": "1659873"
+          }
+        ]
+      }
+    ],
+    "ProcedureStats": {
+      "UEContextReleaseComplete": 1
+    },
+    "FirstProcedure": "UEContextReleaseComplete",
+    "LastProcedure": "UEContextReleaseComplete",
+    "STMSI": null
+  },
+  {
+    "SessionID": "enb_1362393_mme_162859946",
+    "MmeUeS1apID": 162859946,
+    "EnbUeS1apID": 1362393,
+    "SrcIP": "10.73.145.254",
+    "DstIP": "10.3.3.112",
+    "Status": "completed",
+    "CreationTimestamp": "2025-08-07T14:28:21.157Z",
+    "LastUpdate": "2025-08-07T15:28:21.358291561+01:00",
+    "MessageCount": 1,
+    "Messages": [
+      {
+        "packet_number": 216,
+        "timestamp": "2025-01-17T08:30:45.015Z",
+        "src_ip": "10.73.145.254",
+        "dst_ip": "10.3.3.112",
+        "pdu_type": "successfulOutcome",
+        "pdu_type_code": 1,
+        "procedure_name": "UEContextReleaseComplete",
+        "procedure_code": 23,
+        "criticality": "ignore",
+        "information_elements": [
+          {
+            "id": 0,
+            "name": "id_MME_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 162859946,
+            "raw_value": "162859946"
+          },
+          {
+            "id": 8,
+            "name": "id_eNB_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 1362393,
+            "raw_value": "1362393"
+          }
+        ]
+      }
+    ],
+    "ProcedureStats": {
+      "UEContextReleaseComplete": 1
+    },
+    "FirstProcedure": "UEContextReleaseComplete",
+    "LastProcedure": "UEContextReleaseComplete",
+    "STMSI": null
+  },
+  {
+    "SessionID": "enb_65097_mme_141406997",
+    "MmeUeS1apID": 141406997,
+    "EnbUeS1apID": 65097,
+    "SrcIP": "10.73.152.110",
+    "DstIP": "10.3.3.112",
+    "Status": "completed",
+    "CreationTimestamp": "2025-08-07T14:28:21.156Z",
+    "LastUpdate": "2025-08-07T15:28:21.358444125+01:00",
+    "MessageCount": 1,
+    "Messages": [
+      {
+        "packet_number": 215,
+        "timestamp": "2025-01-17T08:30:45.015Z",
+        "src_ip": "10.73.152.110",
+        "dst_ip": "10.3.3.112",
+        "pdu_type": "successfulOutcome",
+        "pdu_type_code": 1,
+        "procedure_name": "UEContextReleaseComplete",
+        "procedure_code": 23,
+        "criticality": "ignore",
+        "information_elements": [
+          {
+            "id": 0,
+            "name": "id_MME_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 141406997,
+            "raw_value": "141406997"
+          },
+          {
+            "id": 8,
+            "name": "id_eNB_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 65097,
+            "raw_value": "65097"
+          }
+        ]
+      }
+    ],
+    "ProcedureStats": {
+      "UEContextReleaseComplete": 1
+    },
+    "FirstProcedure": "UEContextReleaseComplete",
+    "LastProcedure": "UEContextReleaseComplete",
+    "STMSI": null
+  },
+  {
+    "SessionID": "enb_972159_mme_40575592",
+    "MmeUeS1apID": 40575592,
+    "EnbUeS1apID": 972159,
+    "SrcIP": "10.73.150.90",
+    "DstIP": "10.3.3.112",
+    "Status": "completed",
+    "CreationTimestamp": "2025-08-07T14:01:37.807Z",
+    "LastUpdate": "2025-08-07T15:28:21.359601366+01:00",
+    "MessageCount": 1,
+    "Messages": [
+      {
+        "packet_number": 231,
+        "timestamp": "2025-01-17T08:30:45.015Z",
+        "src_ip": "10.73.150.90",
+        "dst_ip": "10.3.3.112",
+        "pdu_type": "successfulOutcome",
+        "pdu_type_code": 1,
+        "procedure_name": "UEContextReleaseComplete",
+        "procedure_code": 23,
+        "criticality": "ignore",
+        "information_elements": [
+          {
+            "id": 0,
+            "name": "id_MME_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 40575592,
+            "raw_value": "40575592"
+          },
+          {
+            "id": 8,
+            "name": "id_eNB_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 972159,
+            "raw_value": "972159"
+          }
+        ]
+      }
+    ],
+    "ProcedureStats": {
+      "UEContextReleaseComplete": 1
+    },
+    "FirstProcedure": "UEContextReleaseComplete",
+    "LastProcedure": "UEContextReleaseComplete",
+    "STMSI": null
+  },
+  {
+    "SessionID": "enb_2281360_mme_1432368",
+    "MmeUeS1apID": 1432368,
+    "EnbUeS1apID": 2281360,
+    "SrcIP": "10.73.98.6",
+    "DstIP": "10.3.3.112",
+    "Status": "completed",
+    "CreationTimestamp": "2025-08-07T14:01:37.827Z",
+    "LastUpdate": "2025-08-07T15:28:21.420334594+01:00",
+    "MessageCount": 1,
+    "Messages": [
+      {
+        "packet_number": 249,
+        "timestamp": "2025-01-17T08:30:45.015Z",
+        "src_ip": "10.73.98.6",
+        "dst_ip": "10.3.3.112",
+        "pdu_type": "successfulOutcome",
+        "pdu_type_code": 1,
+        "procedure_name": "UEContextReleaseComplete",
+        "procedure_code": 23,
+        "criticality": "ignore",
+        "information_elements": [
+          {
+            "id": 0,
+            "name": "id_MME_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 1432368,
+            "raw_value": "1432368"
+          },
+          {
+            "id": 8,
+            "name": "id_eNB_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 2281360,
+            "raw_value": "2281360"
+          }
+        ]
+      }
+    ],
+    "ProcedureStats": {
+      "UEContextReleaseComplete": 1
+    },
+    "FirstProcedure": "UEContextReleaseComplete",
+    "LastProcedure": "UEContextReleaseComplete",
+    "STMSI": null
+  },
+  {
+    "SessionID": "enb_2157081_mme_88293488",
+    "MmeUeS1apID": 88293488,
+    "EnbUeS1apID": 2157081,
+    "SrcIP": "10.73.194.206",
+    "DstIP": "10.3.3.112",
+    "Status": "completed",
+    "CreationTimestamp": "2025-08-07T14:01:37.989Z",
+    "LastUpdate": "2025-08-07T15:28:21.570695529+01:00",
+    "MessageCount": 1,
+    "Messages": [
+      {
+        "packet_number": 325,
+        "timestamp": "2025-01-17T08:30:45.016Z",
+        "src_ip": "10.73.194.206",
+        "dst_ip": "10.3.3.112",
+        "pdu_type": "successfulOutcome",
+        "pdu_type_code": 1,
+        "procedure_name": "UEContextReleaseComplete",
+        "procedure_code": 23,
+        "criticality": "ignore",
+        "information_elements": [
+          {
+            "id": 0,
+            "name": "id_MME_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 88293488,
+            "raw_value": "88293488"
+          },
+          {
+            "id": 8,
+            "name": "id_eNB_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 2157081,
+            "raw_value": "2157081"
+          }
+        ]
+      }
+    ],
+    "ProcedureStats": {
+      "UEContextReleaseComplete": 1
+    },
+    "FirstProcedure": "UEContextReleaseComplete",
+    "LastProcedure": "UEContextReleaseComplete",
+    "STMSI": null
+  },
+  {
+    "SessionID": "enb_64560_mme_73301106",
+    "MmeUeS1apID": 73301106,
+    "EnbUeS1apID": 64560,
+    "SrcIP": "10.73.149.26",
+    "DstIP": "10.3.3.112",
+    "Status": "completed",
+    "CreationTimestamp": "2025-08-07T14:01:37.997Z",
+    "LastUpdate": "2025-08-07T15:28:21.590752502+01:00",
+    "MessageCount": 1,
+    "Messages": [
+      {
+        "packet_number": 341,
+        "timestamp": "2025-01-17T08:30:45.016Z",
+        "src_ip": "10.73.149.26",
+        "dst_ip": "10.3.3.112",
+        "pdu_type": "successfulOutcome",
+        "pdu_type_code": 1,
+        "procedure_name": "UEContextReleaseComplete",
+        "procedure_code": 23,
+        "criticality": "ignore",
+        "information_elements": [
+          {
+            "id": 0,
+            "name": "id_MME_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 73301106,
+            "raw_value": "73301106"
+          },
+          {
+            "id": 8,
+            "name": "id_eNB_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 64560,
+            "raw_value": "64560"
+          }
+        ]
+      }
+    ],
+    "ProcedureStats": {
+      "UEContextReleaseComplete": 1
+    },
+    "FirstProcedure": "UEContextReleaseComplete",
+    "LastProcedure": "UEContextReleaseComplete",
+    "STMSI": null
+  },
+  {
+    "SessionID": "enb_120175_mme_116777946",
+    "MmeUeS1apID": 116777946,
+    "EnbUeS1apID": 120175,
+    "SrcIP": "10.73.81.162",
+    "DstIP": "10.3.3.112",
+    "Status": "completed",
+    "CreationTimestamp": "2025-08-07T14:28:21.721Z",
+    "LastUpdate": "2025-08-07T15:28:21.923278567+01:00",
+    "MessageCount": 1,
+    "Messages": [
+      {
+        "packet_number": 456,
+        "timestamp": "2025-01-17T08:30:45.017Z",
+        "src_ip": "10.73.81.162",
+        "dst_ip": "10.3.3.112",
+        "pdu_type": "successfulOutcome",
+        "pdu_type_code": 1,
+        "procedure_name": "UEContextReleaseComplete",
+        "procedure_code": 23,
+        "criticality": "ignore",
+        "information_elements": [
+          {
+            "id": 0,
+            "name": "id_MME_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 116777946,
+            "raw_value": "116777946"
+          },
+          {
+            "id": 8,
+            "name": "id_eNB_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 120175,
+            "raw_value": "120175"
+          }
+        ]
+      }
+    ],
+    "ProcedureStats": {
+      "UEContextReleaseComplete": 1
+    },
+    "FirstProcedure": "UEContextReleaseComplete",
+    "LastProcedure": "UEContextReleaseComplete",
+    "STMSI": null
+  },
+  {
+    "SessionID": "enb_1511386_mme_67723099",
+    "MmeUeS1apID": 67723099,
+    "EnbUeS1apID": 1511386,
+    "SrcIP": "10.73.195.2",
+    "DstIP": "10.3.3.112",
+    "Status": "completed",
+    "CreationTimestamp": "2025-08-07T14:28:21.814Z",
+    "LastUpdate": "2025-08-07T15:28:22.016718079+01:00",
+    "MessageCount": 1,
+    "Messages": [
+      {
+        "packet_number": 489,
+        "timestamp": "2025-01-17T08:30:45.017Z",
+        "src_ip": "10.73.195.2",
+        "dst_ip": "10.3.3.112",
+        "pdu_type": "successfulOutcome",
+        "pdu_type_code": 1,
+        "procedure_name": "UEContextReleaseComplete",
+        "procedure_code": 23,
+        "criticality": "ignore",
+        "information_elements": [
+          {
+            "id": 0,
+            "name": "id_MME_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 67723099,
+            "raw_value": "67723099"
+          },
+          {
+            "id": 8,
+            "name": "id_eNB_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 1511386,
+            "raw_value": "1511386"
+          }
+        ]
+      }
+    ],
+    "ProcedureStats": {
+      "UEContextReleaseComplete": 1
+    },
+    "FirstProcedure": "UEContextReleaseComplete",
+    "LastProcedure": "UEContextReleaseComplete",
+    "STMSI": null
+  },
+  {
+    "SessionID": "enb_194714_mme_142261472",
+    "MmeUeS1apID": 142261472,
+    "EnbUeS1apID": 194714,
+    "SrcIP": "10.73.129.86",
+    "DstIP": "10.3.3.112",
+    "Status": "completed",
+    "CreationTimestamp": "2025-08-07T14:28:21.815Z",
+    "LastUpdate": "2025-08-07T15:28:22.016887379+01:00",
+    "MessageCount": 1,
+    "Messages": [
+      {
+        "packet_number": 495,
+        "timestamp": "2025-01-17T08:30:45.017Z",
+        "src_ip": "10.73.129.86",
+        "dst_ip": "10.3.3.112",
+        "pdu_type": "successfulOutcome",
+        "pdu_type_code": 1,
+        "procedure_name": "UEContextReleaseComplete",
+        "procedure_code": 23,
+        "criticality": "ignore",
+        "information_elements": [
+          {
+            "id": 0,
+            "name": "id_MME_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 142261472,
+            "raw_value": "142261472"
+          },
+          {
+            "id": 8,
+            "name": "id_eNB_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 194714,
+            "raw_value": "194714"
+          }
+        ]
+      }
+    ],
+    "ProcedureStats": {
+      "UEContextReleaseComplete": 1
+    },
+    "FirstProcedure": "UEContextReleaseComplete",
+    "LastProcedure": "UEContextReleaseComplete",
+    "STMSI": null
+  },
+  {
+    "SessionID": "enb_247322_mme_171188239",
+    "MmeUeS1apID": 171188239,
+    "EnbUeS1apID": 247322,
+    "SrcIP": "10.73.152.98",
+    "DstIP": "10.3.3.112",
+    "Status": "completed",
+    "CreationTimestamp": "2025-08-07T14:01:38.362Z",
+    "LastUpdate": "2025-08-07T15:28:22.383032038+01:00",
+    "MessageCount": 1,
+    "Messages": [
+      {
+        "packet_number": 623,
+        "timestamp": "2025-01-17T08:30:45.018Z",
+        "src_ip": "10.73.152.98",
+        "dst_ip": "10.3.3.112",
+        "pdu_type": "successfulOutcome",
+        "pdu_type_code": 1,
+        "procedure_name": "UEContextReleaseComplete",
+        "procedure_code": 23,
+        "criticality": "ignore",
+        "information_elements": [
+          {
+            "id": 0,
+            "name": "id_MME_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 171188239,
+            "raw_value": "171188239"
+          },
+          {
+            "id": 8,
+            "name": "id_eNB_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 247322,
+            "raw_value": "247322"
+          }
+        ]
+      }
+    ],
+    "ProcedureStats": {
+      "UEContextReleaseComplete": 1
+    },
+    "FirstProcedure": "UEContextReleaseComplete",
+    "LastProcedure": "UEContextReleaseComplete",
+    "STMSI": null
+  },
+  {
+    "SessionID": "enb_2203811_mme_135859037",
+    "MmeUeS1apID": 135859037,
+    "EnbUeS1apID": 2203811,
+    "SrcIP": "10.73.85.166",
+    "DstIP": "10.3.3.112",
+    "Status": "completed",
+    "CreationTimestamp": "2025-08-07T14:28:22.59Z",
+    "LastUpdate": "2025-08-07T15:28:22.792727384+01:00",
+    "MessageCount": 1,
+    "Messages": [
+      {
+        "packet_number": 771,
+        "timestamp": "2025-01-17T08:30:45.018Z",
+        "src_ip": "10.73.85.166",
+        "dst_ip": "10.3.3.112",
+        "pdu_type": "successfulOutcome",
+        "pdu_type_code": 1,
+        "procedure_name": "UEContextReleaseComplete",
+        "procedure_code": 23,
+        "criticality": "ignore",
+        "information_elements": [
+          {
+            "id": 0,
+            "name": "id_MME_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 135859037,
+            "raw_value": "135859037"
+          },
+          {
+            "id": 8,
+            "name": "id_eNB_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 2203811,
+            "raw_value": "2203811"
+          }
+        ]
+      }
+    ],
+    "ProcedureStats": {
+      "UEContextReleaseComplete": 1
+    },
+    "FirstProcedure": "UEContextReleaseComplete",
+    "LastProcedure": "UEContextReleaseComplete",
+    "STMSI": null
+  },
+  {
+    "SessionID": "enb_686528_mme_109946164",
+    "MmeUeS1apID": 109946164,
+    "EnbUeS1apID": 686528,
+    "SrcIP": "10.73.81.250",
+    "DstIP": "10.3.3.112",
+    "Status": "completed",
+    "CreationTimestamp": "2025-08-07T14:28:45.366Z",
+    "LastUpdate": "2025-08-07T15:28:45.569061897+01:00",
+    "MessageCount": 1,
+    "Messages": [
+      {
+        "packet_number": 100,
+        "timestamp": "2025-01-17T08:30:45.015Z",
+        "src_ip": "10.73.81.250",
+        "dst_ip": "10.3.3.112",
+        "pdu_type": "successfulOutcome",
+        "pdu_type_code": 1,
+        "procedure_name": "UEContextReleaseComplete",
+        "procedure_code": 23,
+        "criticality": "ignore",
+        "information_elements": [
+          {
+            "id": 0,
+            "name": "id_MME_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 109946164,
+            "raw_value": "109946164"
+          },
+          {
+            "id": 8,
+            "name": "id_eNB_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 686528,
+            "raw_value": "686528"
+          }
+        ]
+      }
+    ],
+    "ProcedureStats": {
+      "UEContextReleaseComplete": 1
+    },
+    "FirstProcedure": "UEContextReleaseComplete",
+    "LastProcedure": "UEContextReleaseComplete",
+    "STMSI": null
+  },
+  {
+    "SessionID": "enb_918549_mme_47823537",
+    "MmeUeS1apID": 47823537,
+    "EnbUeS1apID": 918549,
+    "SrcIP": "10.73.83.106",
+    "DstIP": "10.3.3.112",
+    "Status": "completed",
+    "CreationTimestamp": "2025-08-07T14:28:45.367Z",
+    "LastUpdate": "2025-08-07T15:28:45.569309828+01:00",
+    "MessageCount": 1,
+    "Messages": [
+      {
+        "packet_number": 101,
+        "timestamp": "2025-01-17T08:30:45.015Z",
+        "src_ip": "10.73.83.106",
+        "dst_ip": "10.3.3.112",
+        "pdu_type": "successfulOutcome",
+        "pdu_type_code": 1,
+        "procedure_name": "UEContextReleaseComplete",
+        "procedure_code": 23,
+        "criticality": "ignore",
+        "information_elements": [
+          {
+            "id": 0,
+            "name": "id_MME_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 47823537,
+            "raw_value": "47823537"
+          },
+          {
+            "id": 8,
+            "name": "id_eNB_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 918549,
+            "raw_value": "918549"
+          }
+        ]
+      }
+    ],
+    "ProcedureStats": {
+      "UEContextReleaseComplete": 1
+    },
+    "FirstProcedure": "UEContextReleaseComplete",
+    "LastProcedure": "UEContextReleaseComplete",
+    "STMSI": null
+  },
+  {
+    "SessionID": "enb_758207_mme_154829170",
+    "MmeUeS1apID": 154829170,
+    "EnbUeS1apID": 758207,
+    "SrcIP": "10.73.97.206",
+    "DstIP": "10.3.3.112",
+    "Status": "completed",
+    "CreationTimestamp": "2025-08-07T14:28:45.38Z",
+    "LastUpdate": "2025-08-07T15:28:45.582003552+01:00",
+    "MessageCount": 1,
+    "Messages": [
+      {
+        "packet_number": 111,
+        "timestamp": "2025-01-17T08:30:45.015Z",
+        "src_ip": "10.73.97.206",
+        "dst_ip": "10.3.3.112",
+        "pdu_type": "successfulOutcome",
+        "pdu_type_code": 1,
+        "procedure_name": "UEContextReleaseComplete",
+        "procedure_code": 23,
+        "criticality": "ignore",
+        "information_elements": [
+          {
+            "id": 0,
+            "name": "id_MME_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 154829170,
+            "raw_value": "154829170"
+          },
+          {
+            "id": 8,
+            "name": "id_eNB_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 758207,
+            "raw_value": "758207"
+          }
+        ]
+      }
+    ],
+    "ProcedureStats": {
+      "UEContextReleaseComplete": 1
+    },
+    "FirstProcedure": "UEContextReleaseComplete",
+    "LastProcedure": "UEContextReleaseComplete",
+    "STMSI": null
+  },
+  {
+    "SessionID": "enb_1343562_mme_34337230",
+    "MmeUeS1apID": 34337230,
+    "EnbUeS1apID": 1343562,
+    "SrcIP": "10.73.86.146",
+    "DstIP": "10.3.3.112",
+    "Status": "completed",
+    "CreationTimestamp": "2025-08-07T14:28:45.403Z",
+    "LastUpdate": "2025-08-07T15:28:45.604992161+01:00",
+    "MessageCount": 1,
+    "Messages": [
+      {
+        "packet_number": 141,
+        "timestamp": "2025-01-17T08:30:45.015Z",
+        "src_ip": "10.73.86.146",
+        "dst_ip": "10.3.3.112",
+        "pdu_type": "successfulOutcome",
+        "pdu_type_code": 1,
+        "procedure_name": "UEContextReleaseComplete",
+        "procedure_code": 23,
+        "criticality": "ignore",
+        "information_elements": [
+          {
+            "id": 0,
+            "name": "id_MME_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 34337230,
+            "raw_value": "34337230"
+          },
+          {
+            "id": 8,
+            "name": "id_eNB_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 1343562,
+            "raw_value": "1343562"
+          }
+        ]
+      }
+    ],
+    "ProcedureStats": {
+      "UEContextReleaseComplete": 1
+    },
+    "FirstProcedure": "UEContextReleaseComplete",
+    "LastProcedure": "UEContextReleaseComplete",
+    "STMSI": null
+  },
+  {
+    "SessionID": "enb_1659873_mme_171859790",
+    "MmeUeS1apID": 171859790,
+    "EnbUeS1apID": 1659873,
+    "SrcIP": "10.73.82.50",
+    "DstIP": "10.3.3.112",
+    "Status": "completed",
+    "CreationTimestamp": "2025-08-07T14:28:45.529Z",
+    "LastUpdate": "2025-08-07T15:28:45.730695823+01:00",
+    "MessageCount": 1,
+    "Messages": [
+      {
+        "packet_number": 199,
+        "timestamp": "2025-01-17T08:30:45.015Z",
+        "src_ip": "10.73.82.50",
+        "dst_ip": "10.3.3.112",
+        "pdu_type": "successfulOutcome",
+        "pdu_type_code": 1,
+        "procedure_name": "UEContextReleaseComplete",
+        "procedure_code": 23,
+        "criticality": "ignore",
+        "information_elements": [
+          {
+            "id": 0,
+            "name": "id_MME_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 171859790,
+            "raw_value": "171859790"
+          },
+          {
+            "id": 8,
+            "name": "id_eNB_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 1659873,
+            "raw_value": "1659873"
+          }
+        ]
+      }
+    ],
+    "ProcedureStats": {
+      "UEContextReleaseComplete": 1
+    },
+    "FirstProcedure": "UEContextReleaseComplete",
+    "LastProcedure": "UEContextReleaseComplete",
+    "STMSI": null
+  },
+  {
+    "SessionID": "enb_65097_mme_141406997",
+    "MmeUeS1apID": 141406997,
+    "EnbUeS1apID": 65097,
+    "SrcIP": "10.73.152.110",
+    "DstIP": "10.3.3.112",
+    "Status": "completed",
+    "CreationTimestamp": "2025-08-07T14:28:45.533Z",
+    "LastUpdate": "2025-08-07T15:28:45.735167685+01:00",
+    "MessageCount": 1,
+    "Messages": [
+      {
+        "packet_number": 215,
+        "timestamp": "2025-01-17T08:30:45.015Z",
+        "src_ip": "10.73.152.110",
+        "dst_ip": "10.3.3.112",
+        "pdu_type": "successfulOutcome",
+        "pdu_type_code": 1,
+        "procedure_name": "UEContextReleaseComplete",
+        "procedure_code": 23,
+        "criticality": "ignore",
+        "information_elements": [
+          {
+            "id": 0,
+            "name": "id_MME_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 141406997,
+            "raw_value": "141406997"
+          },
+          {
+            "id": 8,
+            "name": "id_eNB_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 65097,
+            "raw_value": "65097"
+          }
+        ]
+      }
+    ],
+    "ProcedureStats": {
+      "UEContextReleaseComplete": 1
+    },
+    "FirstProcedure": "UEContextReleaseComplete",
+    "LastProcedure": "UEContextReleaseComplete",
+    "STMSI": null
+  },
+  {
+    "SessionID": "enb_1362393_mme_162859946",
+    "MmeUeS1apID": 162859946,
+    "EnbUeS1apID": 1362393,
+    "SrcIP": "10.73.145.254",
+    "DstIP": "10.3.3.112",
+    "Status": "completed",
+    "CreationTimestamp": "2025-08-07T14:28:45.533Z",
+    "LastUpdate": "2025-08-07T15:28:45.735205482+01:00",
+    "MessageCount": 1,
+    "Messages": [
+      {
+        "packet_number": 216,
+        "timestamp": "2025-01-17T08:30:45.015Z",
+        "src_ip": "10.73.145.254",
+        "dst_ip": "10.3.3.112",
+        "pdu_type": "successfulOutcome",
+        "pdu_type_code": 1,
+        "procedure_name": "UEContextReleaseComplete",
+        "procedure_code": 23,
+        "criticality": "ignore",
+        "information_elements": [
+          {
+            "id": 0,
+            "name": "id_MME_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 162859946,
+            "raw_value": "162859946"
+          },
+          {
+            "id": 8,
+            "name": "id_eNB_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 1362393,
+            "raw_value": "1362393"
+          }
+        ]
+      }
+    ],
+    "ProcedureStats": {
+      "UEContextReleaseComplete": 1
+    },
+    "FirstProcedure": "UEContextReleaseComplete",
+    "LastProcedure": "UEContextReleaseComplete",
+    "STMSI": null
+  },
+  {
+    "SessionID": "enb_204556_mme_12807422",
+    "MmeUeS1apID": 12807422,
+    "EnbUeS1apID": 204556,
+    "SrcIP": "10.73.202.222",
+    "DstIP": "10.3.3.112",
+    "Status": "completed",
+    "CreationTimestamp": "2025-08-07T14:28:45.743Z",
+    "LastUpdate": "2025-08-07T15:28:45.944495792+01:00",
+    "MessageCount": 1,
+    "Messages": [
+      {
+        "packet_number": 382,
+        "timestamp": "2025-01-17T08:30:45.016Z",
+        "src_ip": "10.73.202.222",
+        "dst_ip": "10.3.3.112",
+        "pdu_type": "successfulOutcome",
+        "pdu_type_code": 1,
+        "procedure_name": "UEContextReleaseComplete",
+        "procedure_code": 23,
+        "criticality": "ignore",
+        "information_elements": [
+          {
+            "id": 0,
+            "name": "id_MME_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 12807422,
+            "raw_value": "12807422"
+          },
+          {
+            "id": 8,
+            "name": "id_eNB_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 204556,
+            "raw_value": "204556"
+          }
+        ]
+      }
+    ],
+    "ProcedureStats": {
+      "UEContextReleaseComplete": 1
+    },
+    "FirstProcedure": "UEContextReleaseComplete",
+    "LastProcedure": "UEContextReleaseComplete",
+    "STMSI": null
+  },
+  {
+    "SessionID": "enb_1443197_mme_75989167",
+    "MmeUeS1apID": 75989167,
+    "EnbUeS1apID": 1443197,
+    "SrcIP": "10.73.87.110",
+    "DstIP": "10.3.3.112",
+    "Status": "completed",
+    "CreationTimestamp": "2025-08-07T14:28:45.782Z",
+    "LastUpdate": "2025-08-07T15:28:45.985219273+01:00",
+    "MessageCount": 1,
+    "Messages": [
+      {
+        "packet_number": 415,
+        "timestamp": "2025-01-17T08:30:45.016Z",
+        "src_ip": "10.73.87.110",
+        "dst_ip": "10.3.3.112",
+        "pdu_type": "successfulOutcome",
+        "pdu_type_code": 1,
+        "procedure_name": "UEContextReleaseComplete",
+        "procedure_code": 23,
+        "criticality": "ignore",
+        "information_elements": [
+          {
+            "id": 0,
+            "name": "id_MME_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 75989167,
+            "raw_value": "75989167"
+          },
+          {
+            "id": 8,
+            "name": "id_eNB_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 1443197,
+            "raw_value": "1443197"
+          }
+        ]
+      }
+    ],
+    "ProcedureStats": {
+      "UEContextReleaseComplete": 1
+    },
+    "FirstProcedure": "UEContextReleaseComplete",
+    "LastProcedure": "UEContextReleaseComplete",
+    "STMSI": null
+  },
+  {
+    "SessionID": "enb_120175_mme_116777946",
+    "MmeUeS1apID": 116777946,
+    "EnbUeS1apID": 120175,
+    "SrcIP": "10.73.81.162",
+    "DstIP": "10.3.3.112",
+    "Status": "completed",
+    "CreationTimestamp": "2025-08-07T14:28:45.835Z",
+    "LastUpdate": "2025-08-07T15:28:46.036954182+01:00",
+    "MessageCount": 1,
+    "Messages": [
+      {
+        "packet_number": 456,
+        "timestamp": "2025-01-17T08:30:45.017Z",
+        "src_ip": "10.73.81.162",
+        "dst_ip": "10.3.3.112",
+        "pdu_type": "successfulOutcome",
+        "pdu_type_code": 1,
+        "procedure_name": "UEContextReleaseComplete",
+        "procedure_code": 23,
+        "criticality": "ignore",
+        "information_elements": [
+          {
+            "id": 0,
+            "name": "id_MME_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 116777946,
+            "raw_value": "116777946"
+          },
+          {
+            "id": 8,
+            "name": "id_eNB_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 120175,
+            "raw_value": "120175"
+          }
+        ]
+      }
+    ],
+    "ProcedureStats": {
+      "UEContextReleaseComplete": 1
+    },
+    "FirstProcedure": "UEContextReleaseComplete",
+    "LastProcedure": "UEContextReleaseComplete",
+    "STMSI": null
+  },
+  {
+    "SessionID": "enb_1511386_mme_67723099",
+    "MmeUeS1apID": 67723099,
+    "EnbUeS1apID": 1511386,
+    "SrcIP": "10.73.195.2",
+    "DstIP": "10.3.3.112",
+    "Status": "completed",
+    "CreationTimestamp": "2025-08-07T14:28:45.874Z",
+    "LastUpdate": "2025-08-07T15:28:46.075863299+01:00",
+    "MessageCount": 1,
+    "Messages": [
+      {
+        "packet_number": 489,
+        "timestamp": "2025-01-17T08:30:45.017Z",
+        "src_ip": "10.73.195.2",
+        "dst_ip": "10.3.3.112",
+        "pdu_type": "successfulOutcome",
+        "pdu_type_code": 1,
+        "procedure_name": "UEContextReleaseComplete",
+        "procedure_code": 23,
+        "criticality": "ignore",
+        "information_elements": [
+          {
+            "id": 0,
+            "name": "id_MME_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 67723099,
+            "raw_value": "67723099"
+          },
+          {
+            "id": 8,
+            "name": "id_eNB_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 1511386,
+            "raw_value": "1511386"
+          }
+        ]
+      }
+    ],
+    "ProcedureStats": {
+      "UEContextReleaseComplete": 1
+    },
+    "FirstProcedure": "UEContextReleaseComplete",
+    "LastProcedure": "UEContextReleaseComplete",
+    "STMSI": null
+  },
+  {
+    "SessionID": "enb_194714_mme_142261472",
+    "MmeUeS1apID": 142261472,
+    "EnbUeS1apID": 194714,
+    "SrcIP": "10.73.129.86",
+    "DstIP": "10.3.3.112",
+    "Status": "completed",
+    "CreationTimestamp": "2025-08-07T14:28:45.875Z",
+    "LastUpdate": "2025-08-07T15:28:46.076748002+01:00",
+    "MessageCount": 1,
+    "Messages": [
+      {
+        "packet_number": 495,
+        "timestamp": "2025-01-17T08:30:45.017Z",
+        "src_ip": "10.73.129.86",
+        "dst_ip": "10.3.3.112",
+        "pdu_type": "successfulOutcome",
+        "pdu_type_code": 1,
+        "procedure_name": "UEContextReleaseComplete",
+        "procedure_code": 23,
+        "criticality": "ignore",
+        "information_elements": [
+          {
+            "id": 0,
+            "name": "id_MME_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 142261472,
+            "raw_value": "142261472"
+          },
+          {
+            "id": 8,
+            "name": "id_eNB_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 194714,
+            "raw_value": "194714"
+          }
+        ]
+      }
+    ],
+    "ProcedureStats": {
+      "UEContextReleaseComplete": 1
+    },
+    "FirstProcedure": "UEContextReleaseComplete",
+    "LastProcedure": "UEContextReleaseComplete",
+    "STMSI": null
+  },
+  {
+    "SessionID": "enb_2203811_mme_135859037",
+    "MmeUeS1apID": 135859037,
+    "EnbUeS1apID": 2203811,
+    "SrcIP": "10.73.85.166",
+    "DstIP": "10.3.3.112",
+    "Status": "completed",
+    "CreationTimestamp": "2025-08-07T14:28:46.231Z",
+    "LastUpdate": "2025-08-07T15:28:46.432829087+01:00",
+    "MessageCount": 1,
+    "Messages": [
+      {
+        "packet_number": 771,
+        "timestamp": "2025-01-17T08:30:45.018Z",
+        "src_ip": "10.73.85.166",
+        "dst_ip": "10.3.3.112",
+        "pdu_type": "successfulOutcome",
+        "pdu_type_code": 1,
+        "procedure_name": "UEContextReleaseComplete",
+        "procedure_code": 23,
+        "criticality": "ignore",
+        "information_elements": [
+          {
+            "id": 0,
+            "name": "id_MME_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 135859037,
+            "raw_value": "135859037"
+          },
+          {
+            "id": 8,
+            "name": "id_eNB_UE_S1AP_ID",
+            "criticality": "ignore",
+            "value": 2203811,
+            "raw_value": "2203811"
+          }
+        ]
+      }
+    ],
+    "ProcedureStats": {
+      "UEContextReleaseComplete": 1
+    },
+    "FirstProcedure": "UEContextReleaseComplete",
+    "LastProcedure": "UEContextReleaseComplete",
+    "STMSI": null
+  }
+]
