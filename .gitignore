@@ -7,7 +7,8 @@
 
 # Test binary, built with `go test -c`
 *.test
-
+testdata/
+*.pcap
 # Output of the go coverage tool
 *.out
 coverage.html
